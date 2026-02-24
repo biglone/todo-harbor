@@ -3,9 +3,90 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Todo Harbor</title>
+    <title>Todo Harbor | 代办事项中心</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <p>Todo Harbor 正在初始化前端界面...</p>
+    <div class="bg-orb orb-1" aria-hidden="true"></div>
+    <div class="bg-orb orb-2" aria-hidden="true"></div>
+
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Todo Harbor</p>
+          <h1>你的代办事项港湾</h1>
+          <p class="subtitle">自动保存历史待办与完成状态，刷新页面不会丢失。</p>
+        </div>
+        <span class="status-pill" id="syncStatus">已连接</span>
+      </header>
+
+      <section class="panel composer-panel" aria-label="创建待办">
+        <form id="todoForm" class="composer-form">
+          <label class="sr-only" for="todoInput">输入待办事项</label>
+          <input
+            id="todoInput"
+            name="title"
+            maxlength="200"
+            placeholder="比如：整理本周项目周报"
+            autocomplete="off"
+            required
+          />
+          <button type="submit" id="addButton">新增待办</button>
+        </form>
+      </section>
+
+      <section class="panel metrics-panel" aria-label="统计数据">
+        <article class="metric-card">
+          <p>全部</p>
+          <strong id="countAll">0</strong>
+        </article>
+        <article class="metric-card">
+          <p>进行中</p>
+          <strong id="countActive">0</strong>
+        </article>
+        <article class="metric-card">
+          <p>已完成</p>
+          <strong id="countCompleted">0</strong>
+        </article>
+      </section>
+
+      <section class="panel board-panel">
+        <div class="board-toolbar">
+          <div class="filters" role="tablist" aria-label="筛选代办">
+            <button class="filter is-active" data-filter="all" role="tab" aria-selected="true">
+              全部
+            </button>
+            <button class="filter" data-filter="active" role="tab" aria-selected="false">
+              进行中
+            </button>
+            <button class="filter" data-filter="completed" role="tab" aria-selected="false">
+              已完成
+            </button>
+          </div>
+          <p class="hint">点击左侧圆点可切换完成状态</p>
+        </div>
+
+        <div id="messageBar" class="message" aria-live="polite"></div>
+        <ul id="todoList" class="todo-list" aria-label="代办事项列表"></ul>
+      </section>
+    </main>
+
+    <template id="todoTemplate">
+      <li class="todo-item">
+        <button class="toggle" type="button" aria-label="切换完成状态"></button>
+        <div class="todo-content">
+          <p class="todo-title"></p>
+          <p class="todo-meta"></p>
+        </div>
+      </li>
+    </template>
+
+    <script src="/app.js"></script>
   </body>
 </html>
