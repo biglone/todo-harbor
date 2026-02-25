@@ -91,6 +91,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `completed?: boolean`
   - `project?: string`
   - `dueDate?: YYYY-MM-DD | null`
+  - 响应包含 `count` 与 `skipped`（例如批量完成时会跳过仍有未完成子任务的父任务）
 - `PATCH /api/todos/:id`（编辑任务标题/项目/日期/父任务）
 - `DELETE /api/todos/:id`（删除任务，含其子任务）
 - `DELETE /api/todos/completed`（清理全部已完成任务）

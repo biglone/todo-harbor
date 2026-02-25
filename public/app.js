@@ -964,7 +964,12 @@ async function applyBatchUpdate(payload, pendingMessage, doneMessagePrefix) {
       body: JSON.stringify(payload),
     });
     await loadTodos({ silent: true });
-    setMessage(`${doneMessagePrefix}${result.count || 0} 条`);
+    const skipped = Number(result.skipped || 0);
+    if (skipped > 0) {
+      setMessage(`${doneMessagePrefix}${result.count || 0} 条，跳过 ${skipped} 条（存在未完成子任务）`);
+    } else {
+      setMessage(`${doneMessagePrefix}${result.count || 0} 条`);
+    }
   } catch (error) {
     setMessage(error.message || "批量操作失败", true);
   } finally {

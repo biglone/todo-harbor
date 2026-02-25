@@ -106,6 +106,12 @@ const updateTodoProjectDueQuery = db.prepare(`
   WHERE id = @id
 `);
 
+const listActiveChildIdsQuery = db.prepare(`
+  SELECT id
+  FROM todos
+  WHERE parent_id = @id AND completed = 0
+`);
+
 const listTodoTreeIdsQuery = db.prepare(`
   WITH RECURSIVE tree(id) AS (
     SELECT id FROM todos WHERE id = @id
@@ -302,6 +308,11 @@ function toggleTodo(id) {
   return getTodo(id);
 }
 
+function hasActiveChildren(id) {
+  const rows = listActiveChildIdsQuery.all({ id });
+  return rows.length > 0;
+}
+
 function deleteTodoTree(id) {
   const ids = listTodoTreeIdsQuery
     .all({ id })
@@ -351,6 +362,28 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
   const applyBatch = db.transaction((targetIds) => {
     const updatedIds = new Set();
     const completedAt = completed === true ? new Date().toISOString() : null;
+    let completionEligibleIds = null;
+
+    if (completed === true) {
+      completionEligibleIds = new Set(targetIds);
+      let changed = true;
+
+      while (changed) {
+        changed = false;
+        for (const id of completionEligibleIds) {
+          const activeChildIds = listActiveChildIdsQuery
+            .all({ id })
+            .map((row) => Number(row.id))
+            .filter((childId) => Number.isInteger(childId) && childId > 0);
+
+          const hasExternalActiveChild = activeChildIds.some((childId) => !completionEligibleIds.has(childId));
+          if (hasExternalActiveChild) {
+            completionEligibleIds.delete(id);
+            changed = true;
+          }
+        }
+      }
+    }
 
     for (const id of targetIds) {
       const current = getTodo(id);
@@ -373,6 +406,10 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
       }
 
       if (completed !== undefined) {
+        if (completed === true && completionEligibleIds && !completionEligibleIds.has(id)) {
+          continue;
+        }
+
         const updateResult = updateTodoStatusQuery.run({
           id,
           completed: Number(completed),
@@ -423,6 +460,7 @@ module.exports = {
   updateTodo,
   getTodo,
   toggleTodo,
+  hasActiveChildren,
   deleteTodoTree,
   clearCompletedTodos,
   updateTodosBatch,

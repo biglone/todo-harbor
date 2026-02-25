@@ -7,6 +7,7 @@ const {
   updateTodo,
   getTodo,
   toggleTodo,
+  hasActiveChildren,
   deleteTodoTree,
   clearCompletedTodos,
   updateTodosBatch,
@@ -133,6 +134,10 @@ function parseTodoInput(body, { titleRequired = true } = {}) {
     const parentTodo = getTodo(parentId);
     if (!parentTodo) {
       return { error: "parentId does not exist" };
+    }
+
+    if (parentTodo.completed) {
+      return { error: "parentId must be an active task" };
     }
   }
 
@@ -341,7 +346,10 @@ app.post("/api/todos/batch", (req, res) => {
   }
 
   const result = updateTodosBatch(payload);
-  return res.json(result);
+  return res.json({
+    ...result,
+    skipped: ids.length - result.count,
+  });
 });
 
 app.delete("/api/todos/completed", (_req, res) => {
@@ -404,13 +412,20 @@ app.patch("/api/todos/:id/toggle", (req, res) => {
     });
   }
 
-  const todo = toggleTodo(id);
-  if (!todo) {
+  const existingTodo = getTodo(id);
+  if (!existingTodo) {
     return res.status(404).json({
       error: "Todo not found",
     });
   }
 
+  if (!existingTodo.completed && hasActiveChildren(id)) {
+    return res.status(400).json({
+      error: "Cannot mark a task complete while it still has active child tasks",
+    });
+  }
+
+  const todo = toggleTodo(id);
   return res.json(todo);
 });
 
