@@ -157,6 +157,13 @@
                 已完成
               </button>
             </div>
+            <div class="due-scopes" role="tablist" aria-label="到期范围">
+              <button class="due-scope is-active" data-due-scope="all" role="tab" aria-selected="true">全部日期</button>
+              <button class="due-scope" data-due-scope="overdue" role="tab" aria-selected="false">仅逾期</button>
+              <button class="due-scope" data-due-scope="today" role="tab" aria-selected="false">仅今天</button>
+              <button class="due-scope" data-due-scope="week" role="tab" aria-selected="false">7天内</button>
+              <button class="due-scope" data-due-scope="no_due" role="tab" aria-selected="false">无日期</button>
+            </div>
             <div class="view-modes" role="tablist" aria-label="视图模式">
               <button class="view-mode is-active" data-view="flat" role="tab" aria-selected="true">
                 普通
@@ -195,6 +202,7 @@
               </select>
               <button id="resetQueryButton" class="secondary-button compact-button" type="button">重置筛选</button>
             </div>
+            <p class="due-snapshot" id="dueSnapshot">逾期 0 · 今日到期 0 · 未来7天 0 · 无日期 0</p>
           </div>
           <p class="hint">可设置父任务做层级，或切换视图按项目/日期查看。</p>
         </div>

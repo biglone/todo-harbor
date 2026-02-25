@@ -477,6 +477,24 @@ button {
   color: #fff;
 }
 
+.due-scopes {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.due-scope {
+  padding: 8px 12px;
+  background: #ecf7f3;
+  color: #1f5d53;
+  font-size: 0.86rem;
+}
+
+.due-scope.is-active {
+  background: linear-gradient(140deg, #248f52, #0f7f74);
+  color: #fff;
+}
+
 .view-modes {
   display: inline-flex;
   gap: 8px;
@@ -501,6 +519,12 @@ button {
   font-size: 0.84rem;
   max-width: 360px;
   flex: 0 1 320px;
+}
+
+.due-snapshot {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #27506f;
 }
 
 @media (max-width: 1080px) {
@@ -638,6 +662,24 @@ button {
   background: rgba(250, 239, 226, 0.86);
   border-color: rgba(197, 128, 89, 0.25);
   color: #7a4a2a;
+}
+
+.tag-date.is-overdue {
+  background: rgba(251, 232, 231, 0.94);
+  border-color: rgba(183, 61, 52, 0.32);
+  color: #9a2e28;
+}
+
+.tag-date.is-today {
+  background: rgba(231, 246, 242, 0.95);
+  border-color: rgba(10, 127, 116, 0.34);
+  color: #0c6e64;
+}
+
+.tag-date.is-upcoming {
+  background: rgba(235, 241, 255, 0.94);
+  border-color: rgba(63, 95, 164, 0.3);
+  color: #274881;
 }
 
 .tag-child {

@@ -8,8 +8,10 @@ const state = {
   dueFrom: "",
   dueTo: "",
   sort: "created_desc",
+  dueScope: "all",
   busy: false,
   items: [],
+  visibleItems: [],
   projects: [],
   parents: [],
 };
@@ -51,8 +53,10 @@ const dueFromInputEl = document.getElementById("dueFromInput");
 const dueToInputEl = document.getElementById("dueToInput");
 const sortSelectEl = document.getElementById("sortSelect");
 const resetQueryButtonEl = document.getElementById("resetQueryButton");
+const dueSnapshotEl = document.getElementById("dueSnapshot");
 
 const filterButtons = document.querySelectorAll(".filter");
+const dueScopeButtons = document.querySelectorAll(".due-scope");
 const viewModeButtons = document.querySelectorAll(".view-mode");
 const composeModeButtons = document.querySelectorAll(".compose-mode");
 const quickDateButtons = document.querySelectorAll(".quick-date");
@@ -93,6 +97,9 @@ function setBusy(nextBusy) {
     resetQueryButtonEl.disabled = nextBusy;
   }
   for (const button of composeModeButtons) {
+    button.disabled = nextBusy;
+  }
+  for (const button of dueScopeButtons) {
     button.disabled = nextBusy;
   }
   for (const button of quickDateButtons) {
@@ -153,6 +160,37 @@ function formatDateForInput(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function getTodayDateString() {
+  return formatDateForInput(new Date());
+}
+
+function getNearDueBoundaryDateString(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return formatDateForInput(date);
+}
+
+function getDueStatus(dueDate) {
+  if (!dueDate) {
+    return "none";
+  }
+
+  const today = getTodayDateString();
+  if (dueDate < today) {
+    return "overdue";
+  }
+
+  if (dueDate === today) {
+    return "today";
+  }
+
+  if (dueDate <= getNearDueBoundaryDateString(7)) {
+    return "upcoming";
+  }
+
+  return "future";
 }
 
 function isValidDateInput(value) {
@@ -354,7 +392,19 @@ function renderTodoNode(item, depth) {
   if (item.due_date) {
     const dueDateTag = document.createElement("span");
     dueDateTag.className = "tag tag-date";
-    dueDateTag.textContent = formatDateOnly(item.due_date);
+    const dueStatus = getDueStatus(item.due_date);
+    if (dueStatus === "overdue") {
+      dueDateTag.classList.add("is-overdue");
+      dueDateTag.textContent = `逾期 · ${formatDateOnly(item.due_date)}`;
+    } else if (dueStatus === "today") {
+      dueDateTag.classList.add("is-today");
+      dueDateTag.textContent = `今天 · ${formatDateOnly(item.due_date)}`;
+    } else if (dueStatus === "upcoming") {
+      dueDateTag.classList.add("is-upcoming");
+      dueDateTag.textContent = `7天内 · ${formatDateOnly(item.due_date)}`;
+    } else {
+      dueDateTag.textContent = formatDateOnly(item.due_date);
+    }
     tagsEl.appendChild(dueDateTag);
   }
 
@@ -411,6 +461,19 @@ function renderTodoTree(container, nodes, depth, visited) {
 function renderEmpty() {
   const emptyEl = document.createElement("div");
   emptyEl.className = "empty";
+
+  if (state.dueScope !== "all") {
+    const dueScopeLabelMap = {
+      overdue: "逾期",
+      today: "今日到期",
+      week: "7天内到期",
+      no_due: "无日期",
+    };
+    emptyEl.textContent = `当前筛选条件下没有${dueScopeLabelMap[state.dueScope] || "匹配"}任务。`;
+    todoListEl.appendChild(emptyEl);
+    return;
+  }
+
   emptyEl.textContent =
     state.filter === "completed"
       ? "还没有已完成的待办。"
@@ -503,12 +566,15 @@ function renderGroupedByDate(roots) {
 
 function renderTodos(items) {
   todoListEl.innerHTML = "";
-  if (!items.length) {
+  const scopedItems = applyDueScopeFilter(items);
+  state.visibleItems = scopedItems;
+
+  if (!scopedItems.length) {
     renderEmpty();
     return;
   }
 
-  const roots = buildTodoTree(items);
+  const roots = buildTodoTree(scopedItems);
   if (state.viewMode === "project") {
     renderGroupedByProject(roots);
     return;
@@ -534,6 +600,8 @@ function renderStats(stats) {
   if (clearCompletedButtonEl) {
     clearCompletedButtonEl.disabled = state.busy || completed <= 0;
   }
+
+  renderDueSnapshot(state.items);
 }
 
 function renderFilterButtons() {
@@ -541,6 +609,64 @@ function renderFilterButtons() {
     const selected = button.dataset.filter === state.filter;
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+}
+
+function renderDueScopeButtons() {
+  for (const button of dueScopeButtons) {
+    const selected = button.dataset.dueScope === state.dueScope;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+}
+
+function renderDueSnapshot(items) {
+  if (!dueSnapshotEl) {
+    return;
+  }
+
+  let overdue = 0;
+  let today = 0;
+  let upcoming = 0;
+  let noDue = 0;
+
+  for (const item of items) {
+    const status = getDueStatus(item.due_date);
+    if (status === "overdue") {
+      overdue += 1;
+      continue;
+    }
+    if (status === "today") {
+      today += 1;
+      continue;
+    }
+    if (status === "upcoming") {
+      upcoming += 1;
+      continue;
+    }
+    if (status === "none") {
+      noDue += 1;
+    }
+  }
+
+  dueSnapshotEl.textContent = `逾期 ${overdue} · 今日到期 ${today} · 未来7天 ${upcoming} · 无日期 ${noDue}`;
+}
+
+function applyDueScopeFilter(items) {
+  switch (state.dueScope) {
+    case "overdue":
+      return items.filter((item) => getDueStatus(item.due_date) === "overdue");
+    case "today":
+      return items.filter((item) => getDueStatus(item.due_date) === "today");
+    case "week":
+      return items.filter((item) => {
+        const status = getDueStatus(item.due_date);
+        return status === "today" || status === "upcoming";
+      });
+    case "no_due":
+      return items.filter((item) => getDueStatus(item.due_date) === "none");
+    default:
+      return items;
   }
 }
 
@@ -766,6 +892,7 @@ async function loadTodos({ silent = false } = {}) {
     renderProjectChips(state.projects);
     renderParentOptions(state.parents);
     renderFilterButtons();
+    renderDueScopeButtons();
     renderViewModeButtons();
     renderComposeModeButtons();
     renderComposerActionButtons();
@@ -773,7 +900,7 @@ async function loadTodos({ silent = false } = {}) {
     setSyncStatus("已连接");
 
     if (!silent) {
-      setMessage(`已加载 ${state.items.length} 条记录`);
+      setMessage(`已加载 ${state.visibleItems.length} 条记录（总匹配 ${state.items.length}）`);
     }
   } catch (error) {
     setSyncStatus("连接异常", true);
@@ -950,7 +1077,8 @@ async function onClearCompleted() {
 }
 
 function getVisibleTodoIds({ activeOnly = false } = {}) {
-  const source = activeOnly ? state.items.filter((item) => !item.completed) : state.items;
+  const base = Array.isArray(state.visibleItems) ? state.visibleItems : state.items;
+  const source = activeOnly ? base.filter((item) => !item.completed) : base;
   return source.map((item) => item.id);
 }
 
@@ -1063,6 +1191,19 @@ for (const button of filterButtons) {
 
     state.filter = button.dataset.filter;
     await loadTodos();
+  });
+}
+
+for (const button of dueScopeButtons) {
+  button.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+
+    state.dueScope = button.dataset.dueScope || "all";
+    renderDueScopeButtons();
+    renderTodos(state.items);
+    setMessage(`已切换到 ${button.textContent} 视图`);
   });
 }
 
