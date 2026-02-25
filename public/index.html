@@ -31,7 +31,7 @@
           <div>
             <p class="composer-kicker">新增任务</p>
             <h2>结构化录入区</h2>
-            <p class="composer-note">支持单条创建、按日期批量创建、挂载父任务形成层级。</p>
+            <p class="composer-note">支持单条创建、按到期日期批量创建、挂载父任务形成层级。</p>
           </div>
           <div class="compose-modes" role="tablist" aria-label="新增模式">
             <button class="compose-mode is-active" data-compose-mode="single" role="tab" aria-selected="true">
@@ -66,7 +66,7 @@
                   rows="5"
                   placeholder="例如：&#10;完成接口联调&#10;补充回归测试&#10;更新发布文档"
                 ></textarea>
-                <small>批量模式会按当前项目、日期、父任务统一创建。</small>
+                <small>批量模式会按当前项目、到期日期、父任务统一创建。</small>
               </label>
 
               <div class="composer-extra">
@@ -84,7 +84,7 @@
                 </label>
 
                 <label class="field" for="dueDateInput">
-                  <span>任务日期</span>
+                  <span>到期日期</span>
                   <input id="dueDateInput" name="dueDate" type="date" />
                 </label>
 
@@ -97,11 +97,11 @@
               </div>
 
               <div class="composer-helpers">
-                <div class="quick-dates" aria-label="快捷日期">
+                <div class="quick-dates" aria-label="快捷到期日期">
                   <button type="button" class="quick-date" data-days-offset="0">今天</button>
                   <button type="button" class="quick-date" data-days-offset="1">明天</button>
                   <button type="button" class="quick-date" data-days-offset="7">一周后</button>
-                  <button type="button" class="quick-date" data-clear-date="true">清除日期</button>
+                  <button type="button" class="quick-date" data-clear-date="true">清除到期日</button>
                 </div>
                 <div id="projectChips" class="project-chips" aria-label="历史项目快捷选择"></div>
               </div>
@@ -113,7 +113,7 @@
                 <div><dt>模式</dt><dd id="summaryMode">单条录入</dd></div>
                 <div><dt>预计创建</dt><dd id="summaryCount">1 条</dd></div>
                 <div><dt>项目</dt><dd id="summaryProject">默认项目</dd></div>
-                <div><dt>日期</dt><dd id="summaryDate">未设置日期</dd></div>
+                <div><dt>到期日期</dt><dd id="summaryDate">未设置到期日</dd></div>
                 <div><dt>父任务</dt><dd id="summaryParent">顶级任务</dd></div>
               </dl>
               <p id="summaryHint">单条模式会创建 1 条任务。</p>
@@ -158,11 +158,11 @@
               </button>
             </div>
             <div class="due-scopes" role="tablist" aria-label="到期范围">
-              <button class="due-scope is-active" data-due-scope="all" role="tab" aria-selected="true">全部日期</button>
+              <button class="due-scope is-active" data-due-scope="all" role="tab" aria-selected="true">全部到期日</button>
               <button class="due-scope" data-due-scope="overdue" role="tab" aria-selected="false">仅逾期</button>
               <button class="due-scope" data-due-scope="today" role="tab" aria-selected="false">仅今天</button>
               <button class="due-scope" data-due-scope="week" role="tab" aria-selected="false">7天内</button>
-              <button class="due-scope" data-due-scope="no_due" role="tab" aria-selected="false">无日期</button>
+              <button class="due-scope" data-due-scope="no_due" role="tab" aria-selected="false">无到期日</button>
             </div>
             <div class="view-modes" role="tablist" aria-label="视图模式">
               <button class="view-mode is-active" data-view="flat" role="tab" aria-selected="true">
@@ -172,7 +172,7 @@
                 按项目
               </button>
               <button class="view-mode" data-view="date" role="tab" aria-selected="false">
-                按日期
+                按到期日
               </button>
             </div>
             <div class="toolbar-actions">
@@ -183,7 +183,7 @@
                 批量改项目
               </button>
               <button id="bulkDueDateButton" class="secondary-button compact-button" type="button">
-                批量改日期
+                批量改到期日
               </button>
               <button id="clearCompletedButton" class="danger-button" type="button">清除已完成</button>
             </div>
@@ -192,8 +192,8 @@
               <select id="projectFilterSelect">
                 <option value="">全部项目</option>
               </select>
-              <input id="dueFromInput" type="date" aria-label="起始日期" />
-              <input id="dueToInput" type="date" aria-label="截止日期" />
+              <input id="dueFromInput" type="date" aria-label="开始到期日" />
+              <input id="dueToInput" type="date" aria-label="结束到期日" />
               <select id="sortSelect" aria-label="排序方式">
                 <option value="created_desc">最新创建</option>
                 <option value="created_asc">最早创建</option>
@@ -202,9 +202,9 @@
               </select>
               <button id="resetQueryButton" class="secondary-button compact-button" type="button">重置筛选</button>
             </div>
-            <p class="due-snapshot" id="dueSnapshot">逾期 0 · 今日到期 0 · 未来7天 0 · 无日期 0</p>
+            <p class="due-snapshot" id="dueSnapshot">逾期 0 · 今日到期 0 · 未来7天 0 · 无到期日 0</p>
           </div>
-          <p class="hint">可设置父任务做层级，或切换视图按项目/日期查看。</p>
+          <p class="hint">可设置父任务做层级，或切换视图按项目/到期日查看。</p>
         </div>
 
         <div id="messageBar" class="message" aria-live="polite"></div>

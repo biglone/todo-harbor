@@ -149,7 +149,7 @@ function formatDateTime(value) {
 
 function formatDateOnly(value) {
   if (!value) {
-    return "未设置日期";
+    return "未设置到期日";
   }
 
   const date = new Date(`${value}T00:00:00`);
@@ -246,7 +246,7 @@ function updateComposerSummary() {
   summaryModeEl.textContent = isBatch ? "批量录入" : "单条录入";
   summaryCountEl.textContent = `${plannedCount} 条`;
   summaryProjectEl.textContent = project;
-  summaryDateEl.textContent = dueDate ? formatDateOnly(dueDate) : "未设置日期";
+  summaryDateEl.textContent = dueDate ? formatDateOnly(dueDate) : "未设置到期日";
   summaryParentEl.textContent = parentText;
 
   if (state.editingTodoId) {
@@ -478,7 +478,7 @@ function renderEmpty() {
       overdue: "逾期",
       today: "今日到期",
       week: "7天内到期",
-      no_due: "无日期",
+      no_due: "无到期日",
     };
     emptyEl.textContent = `当前筛选条件下没有${dueScopeLabelMap[state.dueScope] || "匹配"}任务。`;
     todoListEl.appendChild(emptyEl);
@@ -550,7 +550,7 @@ function renderGroupedByProject(roots) {
 function renderGroupedByDate(roots) {
   const groups = new Map();
   for (const root of roots) {
-    const key = root.due_date || "未设置日期";
+    const key = root.due_date || "未设置到期日";
     if (!groups.has(key)) {
       groups.set(key, []);
     }
@@ -558,10 +558,10 @@ function renderGroupedByDate(roots) {
   }
 
   const sortedKeys = [...groups.keys()].sort((a, b) => {
-    if (a === "未设置日期") {
+    if (a === "未设置到期日") {
       return 1;
     }
-    if (b === "未设置日期") {
+    if (b === "未设置到期日") {
       return -1;
     }
     return a.localeCompare(b);
@@ -575,7 +575,7 @@ function renderGroupedByDate(roots) {
     head.className = "group-head";
 
     const title = document.createElement("h3");
-    title.textContent = key === "未设置日期" ? key : formatDateOnly(key);
+    title.textContent = key === "未设置到期日" ? key : formatDateOnly(key);
     head.appendChild(title);
 
     const size = document.createElement("span");
@@ -682,7 +682,7 @@ function renderDueSnapshot(items) {
     }
   }
 
-  dueSnapshotEl.textContent = `逾期 ${overdue} · 今日到期 ${today} · 未来7天 ${upcoming} · 无日期 ${noDue}`;
+  dueSnapshotEl.textContent = `逾期 ${overdue} · 今日到期 ${today} · 未来7天 ${upcoming} · 无到期日 ${noDue}`;
 }
 
 function applyDueScopeFilter(items) {
@@ -899,7 +899,7 @@ async function requestJSON(url, options = {}) {
 async function loadTodos({ silent = false } = {}) {
   syncQueryStateFromControls();
   if (state.dueFrom && state.dueTo && state.dueFrom > state.dueTo) {
-    setMessage("筛选日期范围无效：起始日期不能晚于截止日期", true);
+    setMessage("筛选到期日范围无效：开始到期日不能晚于结束到期日", true);
     return;
   }
 
@@ -1182,19 +1182,19 @@ function onBulkDueDateFiltered() {
     return;
   }
 
-  const input = window.prompt("请输入日期（YYYY-MM-DD），留空可清除日期", state.dueFrom || "");
+  const input = window.prompt("请输入到期日（YYYY-MM-DD），留空可清除到期日", state.dueFrom || "");
   if (input === null) {
     return;
   }
 
   const dueDateRaw = input.trim();
   if (dueDateRaw && !isValidDateInput(dueDateRaw)) {
-    setMessage("日期格式无效，请使用 YYYY-MM-DD", true);
+    setMessage("到期日格式无效，请使用 YYYY-MM-DD", true);
     return;
   }
 
   const dueDate = dueDateRaw || null;
-  applyBatchUpdate({ ids, dueDate }, "正在批量更新日期...", "已批量更新日期，共 ");
+  applyBatchUpdate({ ids, dueDate }, "正在批量更新到期日...", "已批量更新到期日，共 ");
 }
 
 function resetQueryFilters() {

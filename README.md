@@ -5,12 +5,12 @@
 
 ## 功能
 
-- 新增待办事项（支持填写项目、任务日期、父任务）
+- 新增待办事项（支持填写项目、到期日期、父任务）
 - 新增区支持 `单条录入 / 批量录入` 两种模式
 - 切换完成/未完成状态
 - 按 `全部 / 进行中 / 已完成` 过滤
 - 层级任务（父任务/子任务）展示
-- 视图切换：普通视图 / 按项目分组 / 按日期分组
+- 视图切换：普通视图 / 按项目分组 / 按到期日分组
 - 统计总数、进行中、已完成数量
 - SQLite 持久化保存（重启容器后数据仍保留）
 
@@ -92,7 +92,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `project?: string`
   - `dueDate?: YYYY-MM-DD | null`
   - 响应包含 `count` 与 `skipped`（例如批量完成时会跳过仍有未完成子任务的父任务）
-- `PATCH /api/todos/:id`（编辑任务标题/项目/日期/父任务）
+- `PATCH /api/todos/:id`（编辑任务标题/项目/到期日期/父任务）
 - `DELETE /api/todos/:id`（删除任务，含其子任务）
 - `DELETE /api/todos/completed`（清理全部已完成任务）
 - `PATCH /api/todos/:id/toggle`
