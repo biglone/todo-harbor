@@ -3,6 +3,7 @@ const express = require("express");
 const {
   listTodos,
   createTodo,
+  createTodosBulk,
   getTodo,
   toggleTodo,
   getStats,
@@ -60,58 +61,121 @@ function isValidDateString(value) {
   );
 }
 
-app.post("/api/todos", (req, res) => {
-  const title = String(req.body?.title || "").trim();
-  if (!title) {
-    return res.status(400).json({
-      error: "title is required",
-    });
+function parseTodoInput(body, { titleRequired = true } = {}) {
+  const title = String(body?.title || "").trim();
+  if (titleRequired && !title) {
+    return { error: "title is required" };
   }
 
-  if (title.length > 200) {
-    return res.status(400).json({
-      error: "title cannot exceed 200 characters",
-    });
+  if (title && title.length > 200) {
+    return { error: "title cannot exceed 200 characters" };
   }
 
-  const project = String(req.body?.project || "").trim() || "默认项目";
+  const project = String(body?.project || "").trim() || "默认项目";
   if (project.length > 80) {
-    return res.status(400).json({
-      error: "project cannot exceed 80 characters",
-    });
+    return { error: "project cannot exceed 80 characters" };
   }
 
-  const dueDateRaw = String(req.body?.dueDate || "").trim();
+  const dueDateRaw = String(body?.dueDate || "").trim();
   if (dueDateRaw && !isValidDateString(dueDateRaw)) {
-    return res.status(400).json({
-      error: "dueDate must be a valid date in YYYY-MM-DD format",
-    });
+    return { error: "dueDate must be a valid date in YYYY-MM-DD format" };
   }
 
   let parentId = null;
-  if (req.body?.parentId !== undefined && req.body?.parentId !== null && req.body?.parentId !== "") {
-    parentId = Number(req.body.parentId);
+  if (body?.parentId !== undefined && body?.parentId !== null && body?.parentId !== "") {
+    parentId = Number(body.parentId);
     if (!Number.isInteger(parentId) || parentId <= 0) {
-      return res.status(400).json({
-        error: "parentId must be a positive integer",
-      });
+      return { error: "parentId must be a positive integer" };
     }
 
     const parentTodo = getTodo(parentId);
     if (!parentTodo) {
-      return res.status(400).json({
-        error: "parentId does not exist",
-      });
+      return { error: "parentId does not exist" };
     }
   }
 
-  const todo = createTodo({
-    title,
-    project,
-    dueDate: dueDateRaw || null,
-    parentId,
-  });
+  return {
+    value: {
+      title,
+      project,
+      dueDate: dueDateRaw || null,
+      parentId,
+    },
+  };
+}
+
+app.post("/api/todos", (req, res) => {
+  const parsed = parseTodoInput(req.body);
+  if (parsed.error) {
+    return res.status(400).json({
+      error: parsed.error,
+    });
+  }
+
+  const todo = createTodo(parsed.value);
   return res.status(201).json(todo);
+});
+
+app.post("/api/todos/bulk", (req, res) => {
+  const rawTitles = Array.isArray(req.body?.titles) ? req.body.titles : [];
+  if (!rawTitles.length) {
+    return res.status(400).json({
+      error: "titles is required and must be a non-empty array",
+    });
+  }
+
+  if (rawTitles.length > 50) {
+    return res.status(400).json({
+      error: "titles cannot exceed 50 items per request",
+    });
+  }
+
+  const baseParsed = parseTodoInput(
+    {
+      ...req.body,
+      title: "placeholder",
+    },
+    { titleRequired: false },
+  );
+
+  if (baseParsed.error) {
+    return res.status(400).json({
+      error: baseParsed.error,
+    });
+  }
+
+  const items = [];
+  for (const rawTitle of rawTitles) {
+    const title = String(rawTitle || "").trim();
+    if (!title) {
+      continue;
+    }
+
+    if (title.length > 200) {
+      return res.status(400).json({
+        error: "Each title cannot exceed 200 characters",
+      });
+    }
+
+    items.push({
+      title,
+      project: baseParsed.value.project,
+      dueDate: baseParsed.value.dueDate,
+      parentId: baseParsed.value.parentId,
+    });
+  }
+
+  if (!items.length) {
+    return res.status(400).json({
+      error: "No valid titles provided after trimming",
+    });
+  }
+
+  const created = createTodosBulk(items);
+  return res.status(201).json({
+    count: created.length,
+    items: created,
+  });
 });
 
 app.patch("/api/todos/:id/toggle", (req, res) => {

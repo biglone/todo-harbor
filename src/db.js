@@ -111,19 +111,39 @@ function listTodos(filter = "all") {
   return listTodosQuery.all({ filter }).map(mapTodo);
 }
 
-function createTodo({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
+function normalizeCreatePayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
   const title = String(rawTitle || "").trim();
   const project = String(rawProject || "").trim() || "默认项目";
   const dueDate = rawDueDate ? String(rawDueDate).trim() : null;
   const parentIdValue = Number.isInteger(parentId) && parentId > 0 ? parentId : null;
 
-  const result = createTodoQuery.run({
+  return {
     title,
     project,
     due_date: dueDate || null,
     parent_id: parentIdValue,
-  });
+  };
+}
+
+function insertTodo(payload) {
+  const result = createTodoQuery.run(payload);
   return getTodo(result.lastInsertRowid);
+}
+
+function createTodo(payload) {
+  return insertTodo(normalizeCreatePayload(payload));
+}
+
+function createTodosBulk(items) {
+  const createMany = db.transaction((rows) => {
+    const created = [];
+    for (const row of rows) {
+      created.push(insertTodo(normalizeCreatePayload(row)));
+    }
+    return created;
+  });
+
+  return createMany(items);
 }
 
 function getTodo(id) {
@@ -171,6 +191,7 @@ module.exports = {
   dbFile,
   listTodos,
   createTodo,
+  createTodosBulk,
   getTodo,
   toggleTodo,
   getStats,
