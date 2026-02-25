@@ -596,6 +596,25 @@ button {
   color: var(--muted);
 }
 
+.todo-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.todo-action {
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  border-radius: 999px;
+  border: 1px solid rgba(33, 54, 94, 0.22);
+  background: rgba(255, 255, 255, 0.92);
+  color: #28406f;
+}
+
+.todo-action:hover {
+  background: rgba(234, 240, 255, 0.9);
+}
+
 .empty {
   margin-top: 10px;
   border: 1px dashed rgba(33, 54, 94, 0.22);

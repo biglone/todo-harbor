@@ -2,6 +2,7 @@ const state = {
   filter: "all",
   viewMode: "flat",
   composeMode: "single",
+  editingTodoId: null,
   busy: false,
   items: [],
   projects: [],
@@ -115,6 +116,17 @@ function getBatchTitles() {
     .filter(Boolean);
 }
 
+function renderComposerActionButtons() {
+  resetComposerButtonEl.textContent = state.editingTodoId ? "取消编辑" : "清空输入";
+
+  if (state.editingTodoId) {
+    addButtonEl.textContent = "保存修改";
+    return;
+  }
+
+  addButtonEl.textContent = state.composeMode === "batch" ? "批量新增" : "新增待办";
+}
+
 function updateComposerSummary() {
   const project = projectInputEl.value.trim() || "默认项目";
   const dueDate = dueDateInputEl.value;
@@ -131,6 +143,11 @@ function updateComposerSummary() {
   summaryProjectEl.textContent = project;
   summaryDateEl.textContent = dueDate ? formatDateOnly(dueDate) : "未设置日期";
   summaryParentEl.textContent = parentText;
+
+  if (state.editingTodoId) {
+    summaryHintEl.textContent = `正在编辑任务 #${state.editingTodoId}，保存后会覆盖原内容。`;
+    return;
+  }
 
   if (isBatch) {
     summaryHintEl.textContent =
@@ -150,15 +167,29 @@ function renderComposeModeButtons() {
   }
 }
 
+function exitEditMode({ resetFields = false } = {}) {
+  state.editingTodoId = null;
+  if (resetFields) {
+    resetComposerFields();
+  }
+  renderComposerActionButtons();
+  updateComposerSummary();
+}
+
 function setComposeMode(mode) {
+  if (mode === "batch" && state.editingTodoId) {
+    exitEditMode({ resetFields: true });
+    setMessage("已退出编辑模式");
+  }
+
   state.composeMode = mode === "batch" ? "batch" : "single";
 
   const isBatch = state.composeMode === "batch";
   singleInputFieldEl.classList.toggle("is-hidden", isBatch);
   batchInputFieldEl.classList.toggle("is-hidden", !isBatch);
-  addButtonEl.textContent = isBatch ? "批量新增" : "新增待办";
 
   renderComposeModeButtons();
+  renderComposerActionButtons();
   updateComposerSummary();
 }
 
@@ -194,6 +225,48 @@ function countTreeNodes(node) {
     count += countTreeNodes(child);
   }
   return count;
+}
+
+function getTodoById(id) {
+  return state.items.find((item) => item.id === id) || null;
+}
+
+function onEditTodo(id) {
+  if (state.busy) {
+    return;
+  }
+
+  const todo = getTodoById(id);
+  if (!todo) {
+    setMessage("未找到待编辑任务", true);
+    return;
+  }
+
+  setComposeMode("single");
+  state.editingTodoId = id;
+  todoInputEl.value = todo.title;
+  projectInputEl.value = todo.project || "默认项目";
+  dueDateInputEl.value = todo.due_date || "";
+
+  if (todo.parent_id) {
+    const parentId = String(todo.parent_id);
+    const hasOption = [...parentSelectEl.options].some((option) => option.value === parentId);
+    if (!hasOption) {
+      const option = document.createElement("option");
+      option.value = parentId;
+      option.textContent = `当前父任务 #${parentId}`;
+      parentSelectEl.appendChild(option);
+    }
+    parentSelectEl.value = parentId;
+  } else {
+    parentSelectEl.value = "";
+  }
+
+  renderProjectChips(state.projects);
+  renderComposerActionButtons();
+  updateComposerSummary();
+  setMessage(`正在编辑任务 #${id}`);
+  todoFormEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderTodoNode(item, depth) {
@@ -235,6 +308,18 @@ function renderTodoNode(item, depth) {
   metaEl.textContent = item.completed
     ? `创建于 ${formatDateTime(item.created_at)} · 完成于 ${formatDateTime(item.completed_at)}`
     : `创建于 ${formatDateTime(item.created_at)}`;
+
+  const actionsEl = document.createElement("div");
+  actionsEl.className = "todo-actions";
+
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "todo-action";
+  editButton.textContent = "编辑";
+  editButton.addEventListener("click", () => onEditTodo(item.id));
+  actionsEl.appendChild(editButton);
+
+  metaEl.insertAdjacentElement("afterend", actionsEl);
 
   toggleButton.setAttribute("aria-label", item.completed ? "标记为未完成" : "标记为已完成");
   toggleButton.addEventListener("click", () => onToggleTodo(item.id));
@@ -539,6 +624,7 @@ async function loadTodos({ silent = false } = {}) {
     renderFilterButtons();
     renderViewModeButtons();
     renderComposeModeButtons();
+    renderComposerActionButtons();
     updateComposerSummary();
     setSyncStatus("已连接");
 
@@ -558,6 +644,7 @@ function resetComposerFields() {
   todoBatchInputEl.value = "";
   dueDateInputEl.value = "";
   parentSelectEl.value = "";
+  renderProjectChips(state.projects);
   updateComposerSummary();
 }
 
@@ -572,6 +659,32 @@ async function onAddTodo(event) {
   setMessage("正在保存...");
 
   try {
+    if (state.editingTodoId) {
+      const title = todoInputEl.value.trim();
+      if (!title) {
+        throw new Error("请输入待办内容");
+      }
+
+      if (parentId && parentId === state.editingTodoId) {
+        throw new Error("父任务不能选择当前任务自身");
+      }
+
+      await requestJSON(`/api/todos/${state.editingTodoId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title,
+          project,
+          dueDate,
+          parentId,
+        }),
+      });
+
+      exitEditMode({ resetFields: true });
+      setMessage("任务修改成功");
+      await loadTodos({ silent: true });
+      return;
+    }
+
     if (state.composeMode === "batch") {
       const titles = getBatchTitles();
       if (!titles.length) {
@@ -694,6 +807,12 @@ dueDateInputEl.addEventListener("input", updateComposerSummary);
 parentSelectEl.addEventListener("change", syncFieldsWithParent);
 
 resetComposerButtonEl.addEventListener("click", () => {
+  if (state.editingTodoId) {
+    exitEditMode({ resetFields: true });
+    setMessage("已取消编辑");
+    return;
+  }
+
   resetComposerFields();
   setMessage("已清空当前输入");
 });

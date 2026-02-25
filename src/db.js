@@ -64,6 +64,16 @@ const createTodoQuery = db.prepare(`
   VALUES (@title, @project, @due_date, @parent_id)
 `);
 
+const updateTodoQuery = db.prepare(`
+  UPDATE todos
+  SET
+    title = @title,
+    project = @project,
+    due_date = @due_date,
+    parent_id = @parent_id
+  WHERE id = @id
+`);
+
 const getTodoByIdQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
@@ -111,7 +121,7 @@ function listTodos(filter = "all") {
   return listTodosQuery.all({ filter }).map(mapTodo);
 }
 
-function normalizeCreatePayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
+function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
   const title = String(rawTitle || "").trim();
   const project = String(rawProject || "").trim() || "默认项目";
   const dueDate = rawDueDate ? String(rawDueDate).trim() : null;
@@ -131,19 +141,28 @@ function insertTodo(payload) {
 }
 
 function createTodo(payload) {
-  return insertTodo(normalizeCreatePayload(payload));
+  return insertTodo(normalizeTodoPayload(payload));
 }
 
 function createTodosBulk(items) {
   const createMany = db.transaction((rows) => {
     const created = [];
     for (const row of rows) {
-      created.push(insertTodo(normalizeCreatePayload(row)));
+      created.push(insertTodo(normalizeTodoPayload(row)));
     }
     return created;
   });
 
   return createMany(items);
+}
+
+function updateTodo(id, payload) {
+  const normalized = normalizeTodoPayload(payload);
+  updateTodoQuery.run({
+    id,
+    ...normalized,
+  });
+  return getTodo(id);
 }
 
 function getTodo(id) {
@@ -192,6 +211,7 @@ module.exports = {
   listTodos,
   createTodo,
   createTodosBulk,
+  updateTodo,
   getTodo,
   toggleTodo,
   getStats,

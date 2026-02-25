@@ -4,6 +4,7 @@ const {
   listTodos,
   createTodo,
   createTodosBulk,
+  updateTodo,
   getTodo,
   toggleTodo,
   getStats,
@@ -104,6 +105,59 @@ function parseTodoInput(body, { titleRequired = true } = {}) {
   };
 }
 
+function hasParentLoop(todoId, nextParentId) {
+  if (!nextParentId) {
+    return false;
+  }
+
+  const visited = new Set([todoId]);
+  let currentId = nextParentId;
+
+  while (currentId) {
+    if (visited.has(currentId)) {
+      return true;
+    }
+
+    visited.add(currentId);
+    const current = getTodo(currentId);
+    if (!current || !current.parent_id) {
+      return false;
+    }
+
+    currentId = current.parent_id;
+  }
+
+  return false;
+}
+
+function parseTodoUpdateInput(body, existingTodo) {
+  const normalized = {
+    title: body?.title ?? existingTodo.title,
+    project: body?.project ?? existingTodo.project,
+    dueDate: body?.dueDate !== undefined ? body?.dueDate : existingTodo.due_date,
+    parentId: body?.parentId !== undefined ? body?.parentId : existingTodo.parent_id,
+  };
+
+  const parsed = parseTodoInput(normalized);
+  if (parsed.error) {
+    return parsed;
+  }
+
+  if (parsed.value.parentId === existingTodo.id) {
+    return {
+      error: "parentId cannot be self",
+    };
+  }
+
+  if (hasParentLoop(existingTodo.id, parsed.value.parentId)) {
+    return {
+      error: "parentId would create a cycle",
+    };
+  }
+
+  return parsed;
+}
+
 app.post("/api/todos", (req, res) => {
   const parsed = parseTodoInput(req.body);
   if (parsed.error) {
@@ -176,6 +230,32 @@ app.post("/api/todos/bulk", (req, res) => {
     count: created.length,
     items: created,
   });
+});
+
+app.patch("/api/todos/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({
+      error: "id must be a positive integer",
+    });
+  }
+
+  const existingTodo = getTodo(id);
+  if (!existingTodo) {
+    return res.status(404).json({
+      error: "Todo not found",
+    });
+  }
+
+  const parsed = parseTodoUpdateInput(req.body, existingTodo);
+  if (parsed.error) {
+    return res.status(400).json({
+      error: parsed.error,
+    });
+  }
+
+  const todo = updateTodo(id, parsed.value);
+  return res.json(todo);
 });
 
 app.patch("/api/todos/:id/toggle", (req, res) => {
