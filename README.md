@@ -51,14 +51,14 @@ docker compose down
 当前设备已创建 named tunnel（常驻 systemd）：
 
 - tunnel name: `todo-harbor-20260225`
-- domain: `todo-harbor-20260225.biglone.tech`
+- domain: `todo-harbor.biglone.tech`
 - service: `http://127.0.0.1:18080`
 - systemd service: `cloudflared-todo-harbor-20260225.service`
 
 验证公网访问：
 
 ```bash
-curl -I https://todo-harbor-20260225.biglone.tech
+curl -I https://todo-harbor.biglone.tech
 ```
 
 查看 tunnel 服务状态：
