@@ -9,12 +9,15 @@ const state = {
   dueTo: "",
   sort: "created_desc",
   dueScope: "all",
-  renderLimit: 60,
+  page: 1,
+  pageSize: 60,
+  pagination: null,
   busy: false,
   items: [],
   visibleItems: [],
   projects: [],
   parents: [],
+  undoAvailable: false,
 };
 
 const todoListEl = document.getElementById("todoList");
@@ -47,6 +50,9 @@ const countCompletedEl = document.getElementById("countCompleted");
 const bulkCompleteButtonEl = document.getElementById("bulkCompleteButton");
 const bulkProjectButtonEl = document.getElementById("bulkProjectButton");
 const bulkDueDateButtonEl = document.getElementById("bulkDueDateButton");
+const exportButtonEl = document.getElementById("exportButton");
+const importButtonEl = document.getElementById("importButton");
+const undoButtonEl = document.getElementById("undoButton");
 const clearCompletedButtonEl = document.getElementById("clearCompletedButton");
 const searchInputEl = document.getElementById("searchInput");
 const projectFilterSelectEl = document.getElementById("projectFilterSelect");
@@ -59,11 +65,38 @@ const listActionsEl = document.getElementById("listActions");
 const listProgressEl = document.getElementById("listProgress");
 const loadMoreButtonEl = document.getElementById("loadMoreButton");
 
+const modalEl = document.getElementById("actionModal");
+const modalFormEl = document.getElementById("modalForm");
+const modalTitleEl = document.getElementById("modalTitle");
+const modalDescriptionEl = document.getElementById("modalDescription");
+const modalErrorEl = document.getElementById("modalError");
+const modalCloseButtonEl = document.getElementById("modalCloseButton");
+const modalCancelButtonEl = document.getElementById("modalCancelButton");
+const modalSubmitButtonEl = document.getElementById("modalSubmitButton");
+const modalProjectFieldEl = document.getElementById("modalProjectField");
+const modalProjectInputEl = document.getElementById("modalProjectInput");
+const modalDueDateFieldEl = document.getElementById("modalDueDateField");
+const modalDueDateInputEl = document.getElementById("modalDueDateInput");
+const modalImportModeFieldEl = document.getElementById("modalImportModeField");
+const modalImportModeSelectEl = document.getElementById("modalImportModeSelect");
+const modalImportFileFieldEl = document.getElementById("modalImportFileField");
+const modalImportFileInputEl = document.getElementById("modalImportFileInput");
+const modalImportTextFieldEl = document.getElementById("modalImportTextField");
+const modalImportTextareaEl = document.getElementById("modalImportTextarea");
+
 const filterButtons = document.querySelectorAll(".filter");
 const dueScopeButtons = document.querySelectorAll(".due-scope");
 const viewModeButtons = document.querySelectorAll(".view-mode");
 const composeModeButtons = document.querySelectorAll(".compose-mode");
 const quickDateButtons = document.querySelectorAll(".quick-date");
+
+const MODAL_TYPES = {
+  bulkProject: "bulkProject",
+  bulkDueDate: "bulkDueDate",
+  importJson: "importJson",
+};
+
+let activeModalType = null;
 
 function setBusy(nextBusy) {
   state.busy = nextBusy;
@@ -77,6 +110,15 @@ function setBusy(nextBusy) {
   }
   if (bulkDueDateButtonEl) {
     bulkDueDateButtonEl.disabled = nextBusy;
+  }
+  if (exportButtonEl) {
+    exportButtonEl.disabled = nextBusy;
+  }
+  if (importButtonEl) {
+    importButtonEl.disabled = nextBusy;
+  }
+  if (undoButtonEl) {
+    undoButtonEl.disabled = nextBusy || !state.undoAvailable;
   }
   if (clearCompletedButtonEl) {
     const completedCount = Number(countCompletedEl.textContent || 0);
@@ -492,20 +534,20 @@ function renderEmpty() {
   todoListEl.appendChild(emptyEl);
 }
 
-function renderListActions(total, rendered) {
+function renderListActions(pagination, renderedCount) {
   if (!listActionsEl || !listProgressEl || !loadMoreButtonEl) {
     return;
   }
 
-  if (total <= 0) {
+  if (!pagination || pagination.total <= 0) {
     listActionsEl.classList.add("is-hidden");
     return;
   }
 
   listActionsEl.classList.remove("is-hidden");
-  listProgressEl.textContent = `已显示 ${rendered} / ${total}`;
+  listProgressEl.textContent = `已显示 ${renderedCount} / ${pagination.total}`;
 
-  const hasMore = rendered < total;
+  const hasMore = Boolean(pagination.hasNext);
   loadMoreButtonEl.hidden = !hasMore;
   loadMoreButtonEl.disabled = state.busy || !hasMore;
 }
@@ -593,32 +635,30 @@ function renderGroupedByDate(roots) {
   }
 }
 
-function renderTodos(items) {
+function renderTodos(items, pagination) {
   todoListEl.innerHTML = "";
-  const scopedItems = applyDueScopeFilter(items);
-  state.visibleItems = scopedItems;
-  const renderItems = scopedItems.slice(0, Math.max(1, state.renderLimit));
+  state.visibleItems = items;
 
-  if (!renderItems.length) {
+  if (!items.length) {
     renderEmpty();
     return;
   }
 
-  const roots = buildTodoTree(renderItems);
+  const roots = buildTodoTree(items);
   if (state.viewMode === "project") {
     renderGroupedByProject(roots);
-    renderListActions(scopedItems.length, renderItems.length);
+    renderListActions(pagination, items.length);
     return;
   }
 
   if (state.viewMode === "date") {
     renderGroupedByDate(roots);
-    renderListActions(scopedItems.length, renderItems.length);
+    renderListActions(pagination, items.length);
     return;
   }
 
   renderTodoTree(todoListEl, roots, 0, new Set());
-  renderListActions(scopedItems.length, renderItems.length);
+  renderListActions(pagination, items.length);
 }
 
 function renderStats(stats) {
@@ -633,8 +673,6 @@ function renderStats(stats) {
   if (clearCompletedButtonEl) {
     clearCompletedButtonEl.disabled = state.busy || completed <= 0;
   }
-
-  renderDueSnapshot(state.items);
 }
 
 function renderFilterButtons() {
@@ -653,54 +691,16 @@ function renderDueScopeButtons() {
   }
 }
 
-function renderDueSnapshot(items) {
+function renderDueSnapshot(snapshot) {
   if (!dueSnapshotEl) {
     return;
   }
 
-  let overdue = 0;
-  let today = 0;
-  let upcoming = 0;
-  let noDue = 0;
-
-  for (const item of items) {
-    const status = getDueStatus(item.due_date);
-    if (status === "overdue") {
-      overdue += 1;
-      continue;
-    }
-    if (status === "today") {
-      today += 1;
-      continue;
-    }
-    if (status === "upcoming") {
-      upcoming += 1;
-      continue;
-    }
-    if (status === "none") {
-      noDue += 1;
-    }
-  }
-
+  const overdue = Number(snapshot?.overdue || 0);
+  const today = Number(snapshot?.today || 0);
+  const upcoming = Number(snapshot?.upcoming || 0);
+  const noDue = Number(snapshot?.noDue || 0);
   dueSnapshotEl.textContent = `逾期 ${overdue} · 今日到期 ${today} · 未来7天 ${upcoming} · 无到期日 ${noDue}`;
-}
-
-function applyDueScopeFilter(items) {
-  switch (state.dueScope) {
-    case "overdue":
-      return items.filter((item) => getDueStatus(item.due_date) === "overdue");
-    case "today":
-      return items.filter((item) => getDueStatus(item.due_date) === "today");
-    case "week":
-      return items.filter((item) => {
-        const status = getDueStatus(item.due_date);
-        return status === "today" || status === "upcoming";
-      });
-    case "no_due":
-      return items.filter((item) => getDueStatus(item.due_date) === "none");
-    default:
-      return items;
-  }
 }
 
 function renderViewModeButtons() {
@@ -719,10 +719,13 @@ function syncQueryStateFromControls() {
   state.sort = sortSelectEl ? sortSelectEl.value : "created_desc";
 }
 
-function buildTodoQueryURL() {
+function buildTodoQueryURL({ page = 1 } = {}) {
   const params = new URLSearchParams();
   params.set("filter", state.filter);
   params.set("sort", state.sort || "created_desc");
+  params.set("dueScope", state.dueScope || "all");
+  params.set("page", String(page));
+  params.set("pageSize", String(state.pageSize || 60));
 
   if (state.searchKeyword) {
     params.set("q", state.searchKeyword);
@@ -896,31 +899,48 @@ async function requestJSON(url, options = {}) {
   return payload;
 }
 
-async function loadTodos({ silent = false } = {}) {
+function resetListPagination() {
+  state.page = 1;
+  state.pagination = null;
+  state.items = [];
+  state.visibleItems = [];
+}
+
+async function loadTodos({ silent = false, append = false } = {}) {
   syncQueryStateFromControls();
   if (state.dueFrom && state.dueTo && state.dueFrom > state.dueTo) {
     setMessage("筛选到期日范围无效：开始到期日不能晚于结束到期日", true);
     return;
   }
 
-  state.renderLimit = 60;
+  if (!append) {
+    resetListPagination();
+  }
+
   setBusy(true);
   if (!silent) {
-    setMessage("正在同步数据...");
+    setMessage(append ? "正在加载更多..." : "正在同步数据...");
   }
 
   try {
+    const pageToLoad = append ? state.page + 1 : 1;
     const [todoPayload, metaPayload] = await Promise.all([
-      requestJSON(buildTodoQueryURL()),
+      requestJSON(buildTodoQueryURL({ page: pageToLoad })),
       requestJSON("/api/todos/meta"),
     ]);
 
-    state.items = todoPayload.items || [];
+    state.page = pageToLoad;
+    state.pagination = todoPayload.pagination || null;
+
+    const nextItems = Array.isArray(todoPayload.items) ? todoPayload.items : [];
+    state.items = append ? [...state.items, ...nextItems] : nextItems;
     state.projects = metaPayload.projects || [];
     state.parents = metaPayload.parents || [];
+    state.undoAvailable = Boolean(metaPayload.undoAvailable);
 
     renderStats(todoPayload.stats || {});
-    renderTodos(state.items);
+    renderTodos(state.items, state.pagination);
+    renderDueSnapshot(todoPayload.dueSnapshot || {});
     renderProjectSuggestions(state.projects);
     renderProjectFilterOptions(state.projects);
     renderProjectChips(state.projects);
@@ -933,8 +953,13 @@ async function loadTodos({ silent = false } = {}) {
     updateComposerSummary();
     setSyncStatus("已连接");
 
+    if (undoButtonEl) {
+      undoButtonEl.disabled = state.busy || !state.undoAvailable;
+    }
+
     if (!silent) {
-      setMessage(`已加载 ${state.visibleItems.length} 条记录（总匹配 ${state.items.length}）`);
+      const total = Number(todoPayload.pagination?.total || state.items.length);
+      setMessage(`已加载 ${state.items.length} 条记录（总匹配 ${total}）`);
     }
   } catch (error) {
     setSyncStatus("连接异常", true);
@@ -1161,18 +1186,11 @@ function onBulkProjectFiltered() {
     return;
   }
 
-  const input = window.prompt("请输入新的项目名（应用到当前筛选结果）", state.filterProject || "");
-  if (input === null) {
-    return;
-  }
-
-  const project = input.trim();
-  if (!project) {
-    setMessage("项目名不能为空", true);
-    return;
-  }
-
-  applyBatchUpdate({ ids, project }, "正在批量更新项目...", "已批量更新项目，共 ");
+  openModal(MODAL_TYPES.bulkProject, {
+    title: "批量修改项目",
+    description: `将对 ${ids.length} 条任务批量修改项目。`,
+    payload: { ids },
+  });
 }
 
 function onBulkDueDateFiltered() {
@@ -1182,19 +1200,57 @@ function onBulkDueDateFiltered() {
     return;
   }
 
-  const input = window.prompt("请输入到期日（YYYY-MM-DD），留空可清除到期日", state.dueFrom || "");
-  if (input === null) {
-    return;
-  }
+  openModal(MODAL_TYPES.bulkDueDate, {
+    title: "批量修改到期日",
+    description: `将对 ${ids.length} 条任务批量修改到期日。`,
+    payload: { ids },
+  });
+}
 
-  const dueDateRaw = input.trim();
-  if (dueDateRaw && !isValidDateInput(dueDateRaw)) {
-    setMessage("到期日格式无效，请使用 YYYY-MM-DD", true);
-    return;
-  }
+async function onExportTodos() {
+  setBusy(true);
+  setMessage("正在导出...");
 
-  const dueDate = dueDateRaw || null;
-  applyBatchUpdate({ ids, dueDate }, "正在批量更新到期日...", "已批量更新到期日，共 ");
+  try {
+    const payload = await requestJSON("/api/todos/export");
+    const filename = `todo-harbor-${new Date().toISOString().slice(0, 10)}.json`;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage(`已导出 ${payload.count || 0} 条任务`);
+  } catch (error) {
+    setMessage(error.message || "导出失败", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function onImportTodos() {
+  openModal(MODAL_TYPES.importJson, {
+    title: "导入 JSON",
+    description: "支持粘贴导出的 JSON 或选择本地 JSON 文件。",
+  });
+}
+
+async function onUndoLastOperation() {
+  setBusy(true);
+  setMessage("正在撤销...");
+
+  try {
+    const result = await requestJSON("/api/todos/undo", { method: "POST" });
+    setMessage(`已撤销上一步，恢复 ${result.count || 0} 条任务`);
+    await loadTodos({ silent: true });
+  } catch (error) {
+    setMessage(error.message || "撤销失败", true);
+  } finally {
+    setBusy(false);
+  }
 }
 
 function resetQueryFilters() {
@@ -1217,6 +1273,174 @@ function resetQueryFilters() {
   syncQueryStateFromControls();
 }
 
+function setModalVisibility(isOpen) {
+  if (!modalEl) {
+    return;
+  }
+
+  modalEl.classList.toggle("is-hidden", !isOpen);
+  modalEl.setAttribute("aria-hidden", isOpen ? "false" : "true");
+}
+
+function resetModalFields() {
+  modalErrorEl.textContent = "";
+  modalProjectInputEl.value = "";
+  modalDueDateInputEl.value = "";
+  modalImportTextareaEl.value = "";
+  if (modalImportFileInputEl) {
+    modalImportFileInputEl.value = "";
+  }
+  modalImportModeSelectEl.value = "merge";
+}
+
+function hideAllModalFields() {
+  modalProjectFieldEl.classList.add("is-hidden");
+  modalDueDateFieldEl.classList.add("is-hidden");
+  modalImportModeFieldEl.classList.add("is-hidden");
+  modalImportFileFieldEl.classList.add("is-hidden");
+  modalImportTextFieldEl.classList.add("is-hidden");
+}
+
+function openModal(type, options = {}) {
+  activeModalType = type;
+  modalTitleEl.textContent = options.title || "操作确认";
+  modalDescriptionEl.textContent = options.description || "";
+  modalSubmitButtonEl.textContent = options.submitText || "确认";
+  modalFormEl.dataset.payload = JSON.stringify(options.payload || {});
+
+  resetModalFields();
+  hideAllModalFields();
+
+  if (type === MODAL_TYPES.bulkProject) {
+    modalProjectFieldEl.classList.remove("is-hidden");
+  }
+
+  if (type === MODAL_TYPES.bulkDueDate) {
+    modalDueDateFieldEl.classList.remove("is-hidden");
+  }
+
+  if (type === MODAL_TYPES.importJson) {
+    modalImportModeFieldEl.classList.remove("is-hidden");
+    modalImportFileFieldEl.classList.remove("is-hidden");
+    modalImportTextFieldEl.classList.remove("is-hidden");
+  }
+
+  setModalVisibility(true);
+}
+
+function closeModal() {
+  activeModalType = null;
+  modalFormEl.dataset.payload = "";
+  setModalVisibility(false);
+}
+
+function parseModalPayload() {
+  try {
+    return JSON.parse(modalFormEl.dataset.payload || "{}") || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+async function handleModalSubmit(event) {
+  event.preventDefault();
+
+  const payload = parseModalPayload();
+  modalErrorEl.textContent = "";
+
+  if (activeModalType === MODAL_TYPES.bulkProject) {
+    const project = modalProjectInputEl.value.trim();
+    if (!project) {
+      modalErrorEl.textContent = "项目名不能为空";
+      return;
+    }
+    if (project.length > 80) {
+      modalErrorEl.textContent = "项目名不能超过 80 个字符";
+      return;
+    }
+
+    closeModal();
+    await applyBatchUpdate(
+      { ids: payload.ids || [], project },
+      "正在批量更新项目...",
+      "已批量更新项目，共 ",
+    );
+    return;
+  }
+
+  if (activeModalType === MODAL_TYPES.bulkDueDate) {
+    const dueDateRaw = modalDueDateInputEl.value.trim();
+    if (dueDateRaw && !isValidDateInput(dueDateRaw)) {
+      modalErrorEl.textContent = "到期日格式无效，请使用 YYYY-MM-DD";
+      return;
+    }
+
+    closeModal();
+    await applyBatchUpdate(
+      { ids: payload.ids || [], dueDate: dueDateRaw || null },
+      "正在批量更新到期日...",
+      "已批量更新到期日，共 ",
+    );
+    return;
+  }
+
+  if (activeModalType === MODAL_TYPES.importJson) {
+    const text = modalImportTextareaEl.value.trim();
+    if (!text) {
+      modalErrorEl.textContent = "请粘贴 JSON 内容或选择文件";
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      modalErrorEl.textContent = "JSON 格式不正确";
+      return;
+    }
+
+    const mode = modalImportModeSelectEl.value || "merge";
+    closeModal();
+    setBusy(true);
+    setMessage("正在导入...");
+
+    try {
+      const body = Array.isArray(parsed) ? parsed : { mode, items: parsed.items || parsed.todos || [] };
+      const result = await requestJSON("/api/todos/import", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setMessage(`已导入 ${result.count || 0} 条任务（${result.mode === "replace" ? "替换" : "合并"}）`);
+      await loadTodos({ silent: true });
+    } catch (error) {
+      setMessage(error.message || "导入失败", true);
+    } finally {
+      setBusy(false);
+    }
+    return;
+  }
+}
+
+function handleModalBackdrop(event) {
+  if (event.target?.dataset?.modalClose === "true") {
+    closeModal();
+  }
+}
+
+async function handleImportFileChange(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    modalImportTextareaEl.value = text.trim();
+  } catch (error) {
+    modalErrorEl.textContent = "读取文件失败";
+  }
+}
+
 for (const button of filterButtons) {
   button.addEventListener("click", async () => {
     if (state.busy) {
@@ -1229,15 +1453,13 @@ for (const button of filterButtons) {
 }
 
 for (const button of dueScopeButtons) {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     if (state.busy) {
       return;
     }
 
     state.dueScope = button.dataset.dueScope || "all";
-    state.renderLimit = 60;
-    renderDueScopeButtons();
-    renderTodos(state.items);
+    await loadTodos();
     setMessage(`已切换到 ${button.textContent} 视图`);
   });
 }
@@ -1250,7 +1472,7 @@ for (const button of viewModeButtons) {
 
     state.viewMode = button.dataset.view;
     renderViewModeButtons();
-    renderTodos(state.items);
+    renderTodos(state.items, state.pagination);
   });
 }
 
@@ -1399,15 +1621,65 @@ if (bulkDueDateButtonEl) {
   });
 }
 
+if (exportButtonEl) {
+  exportButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onExportTodos();
+  });
+}
+
+if (importButtonEl) {
+  importButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onImportTodos();
+  });
+}
+
+if (undoButtonEl) {
+  undoButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onUndoLastOperation();
+  });
+}
+
 if (loadMoreButtonEl) {
   loadMoreButtonEl.addEventListener("click", () => {
     if (state.busy) {
       return;
     }
 
-    state.renderLimit += 60;
-    renderTodos(state.items);
+    loadTodos({ append: true });
   });
+}
+
+if (modalFormEl) {
+  modalFormEl.addEventListener("submit", handleModalSubmit);
+}
+
+if (modalCloseButtonEl) {
+  modalCloseButtonEl.addEventListener("click", () => {
+    closeModal();
+  });
+}
+
+if (modalCancelButtonEl) {
+  modalCancelButtonEl.addEventListener("click", () => {
+    closeModal();
+  });
+}
+
+if (modalEl) {
+  modalEl.addEventListener("click", handleModalBackdrop);
+}
+
+if (modalImportFileInputEl) {
+  modalImportFileInputEl.addEventListener("change", handleImportFileChange);
 }
 
 todoFormEl.addEventListener("submit", onAddTodo);

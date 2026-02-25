@@ -11,6 +11,10 @@ const {
   deleteTodoTree,
   clearCompletedTodos,
   updateTodosBatch,
+  importTodos,
+  exportTodos,
+  hasUndoSnapshot,
+  undoLastOperation,
   getStats,
   listParentCandidates,
   listProjects,
@@ -19,9 +23,35 @@ const {
 
 const VALID_FILTERS = new Set(["all", "active", "completed"]);
 const VALID_SORTS = new Set(["created_desc", "created_asc", "due_asc", "due_desc"]);
+const VALID_DUE_SCOPES = new Set(["all", "overdue", "today", "week", "no_due"]);
+const DEFAULT_PAGE_SIZE = 60;
+const MAX_PAGE_SIZE = 200;
+
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: "6mb" }));
+
+app.use((req, res, next) => {
+  const startAt = process.hrtime.bigint();
+
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - startAt) / 1e6;
+    console.log(
+      JSON.stringify({
+        level: "info",
+        type: "request",
+        timestamp: new Date().toISOString(),
+        method: req.method,
+        path: req.originalUrl,
+        status: res.statusCode,
+        durationMs: Number(durationMs.toFixed(2)),
+        ip: req.ip,
+      }),
+    );
+  });
+
+  next();
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -44,6 +74,7 @@ app.get("/api/todos", (req, res) => {
   const dueFrom = String(req.query.dueFrom || "").trim();
   const dueTo = String(req.query.dueTo || "").trim();
   const sort = String(req.query.sort || "created_desc").trim();
+  const dueScope = String(req.query.dueScope || "all").trim();
 
   if (dueFrom && !isValidDateString(dueFrom)) {
     return res.status(400).json({
@@ -69,17 +100,51 @@ app.get("/api/todos", (req, res) => {
     });
   }
 
+  if (!VALID_DUE_SCOPES.has(dueScope)) {
+    return res.status(400).json({
+      error: "Invalid dueScope. Allowed values: all, overdue, today, week, no_due",
+    });
+  }
+
+  const page = parsePositiveInteger(req.query.page, {
+    field: "page",
+    defaultValue: 1,
+    min: 1,
+    max: 100000,
+  });
+  if (page.error) {
+    return res.status(400).json({ error: page.error });
+  }
+
+  const pageSize = parsePositiveInteger(req.query.pageSize, {
+    field: "pageSize",
+    defaultValue: DEFAULT_PAGE_SIZE,
+    min: 1,
+    max: MAX_PAGE_SIZE,
+  });
+  if (pageSize.error) {
+    return res.status(400).json({ error: pageSize.error });
+  }
+
+  const result = listTodos({
+    filter,
+    project,
+    keyword,
+    dueFrom,
+    dueTo,
+    sort,
+    dueScope,
+    page: page.value,
+    pageSize: pageSize.value,
+  });
+
   return res.json({
     filter,
+    dueScope,
     stats: getStats(),
-    items: listTodos({
-      filter,
-      project,
-      keyword,
-      dueFrom,
-      dueTo,
-      sort,
-    }),
+    pagination: result.pagination,
+    dueSnapshot: result.dueSnapshot,
+    items: result.items,
   });
 });
 
@@ -87,6 +152,60 @@ app.get("/api/todos/meta", (_req, res) => {
   return res.json({
     projects: listProjects(),
     parents: listParentCandidates(),
+    undoAvailable: hasUndoSnapshot(),
+  });
+});
+
+app.get("/api/todos/export", (_req, res) => {
+  const items = exportTodos();
+  return res.json({
+    count: items.length,
+    exportedAt: new Date().toISOString(),
+    items,
+  });
+});
+
+app.post("/api/todos/import", (req, res) => {
+  const isRawArray = Array.isArray(req.body);
+  const mode = isRawArray ? "merge" : String(req.body?.mode || "merge");
+  const items = isRawArray ? req.body : req.body?.items;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      error: "items is required and must be a non-empty array",
+    });
+  }
+
+  if (items.length > 5000) {
+    return res.status(400).json({
+      error: "items cannot exceed 5000 records per request",
+    });
+  }
+
+  try {
+    const result = importTodos({ items, mode });
+    return res.status(201).json({
+      ...result,
+      stats: getStats(),
+    });
+  } catch (error) {
+    return res.status(400).json({
+      error: error.message || "Import failed",
+    });
+  }
+});
+
+app.post("/api/todos/undo", (_req, res) => {
+  const result = undoLastOperation();
+  if (!result.restored) {
+    return res.status(409).json({
+      error: "No undo snapshot available",
+    });
+  }
+
+  return res.json({
+    ...result,
+    stats: getStats(),
   });
 });
 
@@ -102,6 +221,28 @@ function isValidDateString(value) {
     date.getUTCMonth() === month - 1 &&
     date.getUTCDate() === day
   );
+}
+
+function parsePositiveInteger(rawValue, { field, defaultValue, min, max }) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return { value: defaultValue };
+  }
+
+  const text = String(rawValue).trim();
+  if (!/^\d+$/.test(text)) {
+    return {
+      error: `${field} must be a positive integer`,
+    };
+  }
+
+  const value = Number.parseInt(text, 10);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    return {
+      error: `${field} must be between ${min} and ${max}`,
+    };
+  }
+
+  return { value };
 }
 
 function parseTodoInput(body, { titleRequired = true } = {}) {
@@ -431,8 +572,19 @@ app.patch("/api/todos/:id/toggle", (req, res) => {
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-app.use((err, _req, res, _next) => {
-  console.error(err);
+app.use((err, req, res, _next) => {
+  console.error(
+    JSON.stringify({
+      level: "error",
+      type: "unhandled_error",
+      timestamp: new Date().toISOString(),
+      method: req.method,
+      path: req.originalUrl,
+      message: err?.message || "Unknown Error",
+      stack: typeof err?.stack === "string" ? err.stack.split("\n").slice(0, 8).join("\n") : undefined,
+    }),
+  );
+
   res.status(500).json({
     error: "Internal Server Error",
   });

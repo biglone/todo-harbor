@@ -10,7 +10,36 @@ fs.mkdirSync(dataDir, { recursive: true });
 const db = new Database(dbFile);
 db.pragma("journal_mode = WAL");
 
-db.exec(`
+let lastUndoSnapshot = null;
+
+const listFilterWhereClause = `
+  (
+    @filter = 'all'
+    OR (@filter = 'active' AND completed = 0)
+    OR (@filter = 'completed' AND completed = 1)
+  )
+  AND (@project = '' OR project = @project)
+  AND (
+    @keyword = ''
+    OR title LIKE '%' || @keyword || '%'
+    OR project LIKE '%' || @keyword || '%'
+  )
+  AND (@due_from = '' OR (due_date IS NOT NULL AND due_date >= @due_from))
+  AND (@due_to = '' OR (due_date IS NOT NULL AND due_date <= @due_to))
+`;
+
+const listFilterWhereWithScopeClause = `
+  ${listFilterWhereClause}
+  AND (
+    @due_scope = 'all'
+    OR (@due_scope = 'overdue' AND due_date IS NOT NULL AND due_date < @today)
+    OR (@due_scope = 'today' AND due_date = @today)
+    OR (@due_scope = 'week' AND due_date IS NOT NULL AND due_date >= @today AND due_date <= @week_end)
+    OR (@due_scope = 'no_due' AND due_date IS NULL)
+  )
+`;
+
+const createTablesSQL = `
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL CHECK (length(trim(title)) > 0),
@@ -21,7 +50,9 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
   );
-`);
+`;
+
+db.exec(createTablesSQL);
 
 const tableColumns = new Set(
   db
@@ -49,24 +80,58 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
 `);
 
-const listTodosQuery = db.prepare(`
+const listTodosCreatedDescQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
-  WHERE
-    (
-      @filter = 'all'
-      OR (@filter = 'active' AND completed = 0)
-      OR (@filter = 'completed' AND completed = 1)
-    )
-    AND (@project = '' OR project = @project)
-    AND (
-      @keyword = ''
-      OR title LIKE '%' || @keyword || '%'
-      OR project LIKE '%' || @keyword || '%'
-    )
-    AND (@due_from = '' OR (due_date IS NOT NULL AND due_date >= @due_from))
-    AND (@due_to = '' OR (due_date IS NOT NULL AND due_date <= @due_to))
+  WHERE ${listFilterWhereWithScopeClause}
   ORDER BY id DESC
+  LIMIT @limit OFFSET @offset
+`);
+
+const listTodosCreatedAscQuery = db.prepare(`
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  FROM todos
+  WHERE ${listFilterWhereWithScopeClause}
+  ORDER BY id ASC
+  LIMIT @limit OFFSET @offset
+`);
+
+const listTodosDueAscQuery = db.prepare(`
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  FROM todos
+  WHERE ${listFilterWhereWithScopeClause}
+  ORDER BY
+    CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC,
+    due_date ASC,
+    id DESC
+  LIMIT @limit OFFSET @offset
+`);
+
+const listTodosDueDescQuery = db.prepare(`
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  FROM todos
+  WHERE ${listFilterWhereWithScopeClause}
+  ORDER BY
+    CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC,
+    due_date DESC,
+    id DESC
+  LIMIT @limit OFFSET @offset
+`);
+
+const countFilteredTodosQuery = db.prepare(`
+  SELECT COUNT(*) AS total
+  FROM todos
+  WHERE ${listFilterWhereWithScopeClause}
+`);
+
+const countDueSnapshotQuery = db.prepare(`
+  SELECT
+    SUM(CASE WHEN due_date IS NOT NULL AND due_date < @today THEN 1 ELSE 0 END) AS overdue,
+    SUM(CASE WHEN due_date = @today THEN 1 ELSE 0 END) AS today,
+    SUM(CASE WHEN due_date IS NOT NULL AND due_date > @today AND due_date <= @week_end THEN 1 ELSE 0 END) AS upcoming,
+    SUM(CASE WHEN due_date IS NULL THEN 1 ELSE 0 END) AS no_due
+  FROM todos
+  WHERE ${listFilterWhereClause}
 `);
 
 const createTodoQuery = db.prepare(`
@@ -149,6 +214,12 @@ const countTodosQuery = db.prepare(`
   FROM todos
 `);
 
+const countCompletedTodosQuery = db.prepare(`
+  SELECT COUNT(*) AS total
+  FROM todos
+  WHERE completed = 1
+`);
+
 const listParentCandidatesQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
@@ -163,6 +234,33 @@ const listProjectsQuery = db.prepare(`
   ORDER BY LOWER(project) ASC
 `);
 
+const listAllTodosRawQuery = db.prepare(`
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  FROM todos
+  ORDER BY id ASC
+`);
+
+const insertTodoRawQuery = db.prepare(`
+  INSERT INTO todos (id, title, project, due_date, parent_id, completed, created_at, completed_at)
+  VALUES (@id, @title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
+`);
+
+const insertImportedTodoQuery = db.prepare(`
+  INSERT INTO todos (title, project, due_date, parent_id, completed, created_at, completed_at)
+  VALUES (@title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
+`);
+
+const updateImportedParentQuery = db.prepare(`
+  UPDATE todos
+  SET parent_id = @parent_id
+  WHERE id = @id
+`);
+
+const deleteAllTodosQuery = db.prepare(`DELETE FROM todos`);
+const resetTodosSequenceQuery = db.prepare(`DELETE FROM sqlite_sequence WHERE name = 'todos'`);
+const updateTodosSequenceQuery = db.prepare(`UPDATE sqlite_sequence SET seq = @seq WHERE name = 'todos'`);
+const insertTodosSequenceQuery = db.prepare(`INSERT INTO sqlite_sequence (name, seq) VALUES ('todos', @seq)`);
+
 function mapTodo(row) {
   return {
     ...row,
@@ -170,77 +268,133 @@ function mapTodo(row) {
   };
 }
 
-function compareDueDate(a, b) {
-  const hasDueA = Boolean(a.due_date);
-  const hasDueB = Boolean(b.due_date);
-
-  if (!hasDueA && !hasDueB) {
-    return 0;
-  }
-
-  if (!hasDueA) {
-    return 1;
-  }
-
-  if (!hasDueB) {
-    return -1;
-  }
-
-  return a.due_date.localeCompare(b.due_date);
+function mapRawTodo(row) {
+  return {
+    ...row,
+    completed: Number(row.completed || 0),
+  };
 }
 
-function sortTodos(items, sort) {
-  const sorted = [...items];
+function isValidDateString(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function formatDateForInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayDateString() {
+  return formatDateForInput(new Date());
+}
+
+function getDateAfterDaysString(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return formatDateForInput(date);
+}
+
+function normalizeListOptions(options = "all") {
+  const defaults = {
+    filter: "all",
+    project: "",
+    keyword: "",
+    dueFrom: "",
+    dueTo: "",
+    sort: "created_desc",
+    dueScope: "all",
+    page: 1,
+    pageSize: 60,
+    today: getTodayDateString(),
+    weekEnd: getDateAfterDaysString(7),
+  };
+
+  const merged =
+    typeof options === "string"
+      ? { ...defaults, filter: options }
+      : {
+          ...defaults,
+          ...options,
+        };
+
+  const pageNumber = Number.parseInt(String(merged.page), 10);
+  const pageSizeNumber = Number.parseInt(String(merged.pageSize), 10);
+
+  const normalizedPage = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
+  const normalizedPageSize = Number.isInteger(pageSizeNumber)
+    ? Math.min(Math.max(pageSizeNumber, 1), 200)
+    : 60;
+
+  return {
+    filter: String(merged.filter || "all"),
+    project: String(merged.project || "").trim(),
+    keyword: String(merged.keyword || "").trim(),
+    due_from: String(merged.dueFrom || "").trim(),
+    due_to: String(merged.dueTo || "").trim(),
+    sort: String(merged.sort || "created_desc"),
+    due_scope: String(merged.dueScope || "all"),
+    today: String(merged.today || getTodayDateString()),
+    week_end: String(merged.weekEnd || getDateAfterDaysString(7)),
+    limit: normalizedPageSize,
+    offset: (normalizedPage - 1) * normalizedPageSize,
+    page: normalizedPage,
+    page_size: normalizedPageSize,
+  };
+}
+
+function selectListQuery(sort) {
   switch (sort) {
     case "created_asc":
-      sorted.sort((a, b) => a.id - b.id);
-      return sorted;
+      return listTodosCreatedAscQuery;
     case "due_asc":
-      sorted.sort((a, b) => {
-        const dueCompare = compareDueDate(a, b);
-        if (dueCompare !== 0) {
-          return dueCompare;
-        }
-        return b.id - a.id;
-      });
-      return sorted;
+      return listTodosDueAscQuery;
     case "due_desc":
-      sorted.sort((a, b) => {
-        const dueCompare = compareDueDate(a, b);
-        if (dueCompare !== 0) {
-          return -dueCompare;
-        }
-        return b.id - a.id;
-      });
-      return sorted;
+      return listTodosDueDescQuery;
     default:
-      sorted.sort((a, b) => b.id - a.id);
-      return sorted;
+      return listTodosCreatedDescQuery;
   }
 }
 
 function listTodos(options = "all") {
-  const normalizedOptions =
-    typeof options === "string"
-      ? {
-          filter: options,
-          project: "",
-          keyword: "",
-          due_from: "",
-          due_to: "",
-          sort: "created_desc",
-        }
-      : {
-          filter: String(options.filter || "all"),
-          project: String(options.project || "").trim(),
-          keyword: String(options.keyword || "").trim(),
-          due_from: String(options.dueFrom || "").trim(),
-          due_to: String(options.dueTo || "").trim(),
-          sort: String(options.sort || "created_desc").trim(),
-        };
+  const normalizedOptions = normalizeListOptions(options);
+  const listQuery = selectListQuery(normalizedOptions.sort);
 
-  const rows = listTodosQuery.all(normalizedOptions).map(mapTodo);
-  return sortTodos(rows, normalizedOptions.sort);
+  const rows = listQuery.all(normalizedOptions).map(mapTodo);
+  const countRow = countFilteredTodosQuery.get(normalizedOptions) || { total: 0 };
+  const dueSnapshotRow = countDueSnapshotQuery.get(normalizedOptions) || {};
+
+  const total = Number(countRow.total || 0);
+  const totalPages = total > 0 ? Math.ceil(total / normalizedOptions.limit) : 0;
+  const loaded = normalizedOptions.offset + rows.length;
+
+  return {
+    items: rows,
+    pagination: {
+      page: normalizedOptions.page,
+      pageSize: normalizedOptions.limit,
+      total,
+      totalPages,
+      hasNext: loaded < total,
+    },
+    dueSnapshot: {
+      overdue: Number(dueSnapshotRow.overdue || 0),
+      today: Number(dueSnapshotRow.today || 0),
+      upcoming: Number(dueSnapshotRow.upcoming || 0),
+      noDue: Number(dueSnapshotRow.no_due || 0),
+    },
+  };
 }
 
 function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
@@ -257,16 +411,77 @@ function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: r
   };
 }
 
+function saveUndoSnapshot() {
+  lastUndoSnapshot = listAllTodosRawQuery.all().map(mapRawTodo);
+}
+
+function hasUndoSnapshot() {
+  return Array.isArray(lastUndoSnapshot);
+}
+
+function restoreSnapshot(snapshotRows) {
+  const restore = db.transaction((rows) => {
+    deleteAllTodosQuery.run();
+    resetTodosSequenceQuery.run();
+
+    let maxId = 0;
+    for (const row of rows) {
+      insertTodoRawQuery.run({
+        id: Number(row.id),
+        title: String(row.title),
+        project: String(row.project || "默认项目"),
+        due_date: row.due_date ? String(row.due_date) : null,
+        parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
+        completed: Number(row.completed ? 1 : 0),
+        created_at: String(row.created_at || new Date().toISOString()),
+        completed_at: row.completed_at ? String(row.completed_at) : null,
+      });
+      maxId = Math.max(maxId, Number(row.id) || 0);
+    }
+
+    if (maxId > 0) {
+      const updateResult = updateTodosSequenceQuery.run({ seq: maxId });
+      if (updateResult.changes <= 0) {
+        insertTodosSequenceQuery.run({ seq: maxId });
+      }
+    }
+
+    clearOrphanParentsQuery.run();
+  });
+
+  restore(snapshotRows);
+}
+
+function undoLastOperation() {
+  if (!hasUndoSnapshot()) {
+    return {
+      restored: false,
+      count: 0,
+    };
+  }
+
+  const snapshot = lastUndoSnapshot;
+  restoreSnapshot(snapshot);
+  lastUndoSnapshot = null;
+
+  return {
+    restored: true,
+    count: snapshot.length,
+  };
+}
+
 function insertTodo(payload) {
   const result = createTodoQuery.run(payload);
   return getTodo(result.lastInsertRowid);
 }
 
 function createTodo(payload) {
+  saveUndoSnapshot();
   return insertTodo(normalizeTodoPayload(payload));
 }
 
 function createTodosBulk(items) {
+  saveUndoSnapshot();
   const createMany = db.transaction((rows) => {
     const created = [];
     for (const row of rows) {
@@ -279,6 +494,7 @@ function createTodosBulk(items) {
 }
 
 function updateTodo(id, payload) {
+  saveUndoSnapshot();
   const normalized = normalizeTodoPayload(payload);
   updateTodoQuery.run({
     id,
@@ -298,6 +514,7 @@ function toggleTodo(id) {
     return null;
   }
 
+  saveUndoSnapshot();
   const nextCompleted = !existing.completed;
   updateTodoStatusQuery.run({
     id,
@@ -326,6 +543,7 @@ function deleteTodoTree(id) {
     };
   }
 
+  saveUndoSnapshot();
   const removeTree = db.transaction((targetIds) => {
     for (const targetId of targetIds) {
       deleteTodoByIdQuery.run({ id: targetId });
@@ -341,6 +559,12 @@ function deleteTodoTree(id) {
 }
 
 function clearCompletedTodos() {
+  const row = countCompletedTodosQuery.get() || { total: 0 };
+  if (Number(row.total || 0) <= 0) {
+    return 0;
+  }
+
+  saveUndoSnapshot();
   const clearCompleted = db.transaction(() => {
     const deleted = deleteCompletedTodosQuery.run();
     clearOrphanParentsQuery.run();
@@ -359,6 +583,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
     };
   }
 
+  saveUndoSnapshot();
   const applyBatch = db.transaction((targetIds) => {
     const updatedIds = new Set();
     const completedAt = completed === true ? new Date().toISOString() : null;
@@ -413,7 +638,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
         const updateResult = updateTodoStatusQuery.run({
           id,
           completed: Number(completed),
-          completed_at: completedAt,
+          completed_at: completed ? completedAt : null,
         });
 
         if (updateResult.changes > 0) {
@@ -430,6 +655,112 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
     count: updatedIds.length,
     ids: updatedIds,
   };
+}
+
+function normalizeImportItem(rawItem, index) {
+  const title = String(rawItem?.title || "").trim();
+  if (!title) {
+    throw new Error(`items[${index}].title is required`);
+  }
+  if (title.length > 200) {
+    throw new Error(`items[${index}].title cannot exceed 200 characters`);
+  }
+
+  const project = String(rawItem?.project || "").trim() || "默认项目";
+  if (project.length > 80) {
+    throw new Error(`items[${index}].project cannot exceed 80 characters`);
+  }
+
+  const dueDateRaw = rawItem?.due_date ?? rawItem?.dueDate ?? null;
+  const dueDate = dueDateRaw === null || dueDateRaw === undefined ? null : String(dueDateRaw).trim() || null;
+  if (dueDate && !isValidDateString(dueDate)) {
+    throw new Error(`items[${index}].dueDate must be YYYY-MM-DD`);
+  }
+
+  const completed = Boolean(rawItem?.completed);
+  const createdAt = String(rawItem?.created_at || rawItem?.createdAt || new Date().toISOString());
+  const completedAt = completed
+    ? String(rawItem?.completed_at || rawItem?.completedAt || new Date().toISOString())
+    : null;
+
+  const idRaw = Number(rawItem?.id);
+  const parentRaw = Number(rawItem?.parent_id ?? rawItem?.parentId);
+
+  return {
+    sourceKey: Number.isInteger(idRaw) && idRaw > 0 ? `id:${idRaw}` : `idx:${index}`,
+    parentKey: Number.isInteger(parentRaw) && parentRaw > 0 ? `id:${parentRaw}` : null,
+    title,
+    project,
+    due_date: dueDate,
+    completed: Number(completed),
+    created_at: createdAt,
+    completed_at: completedAt,
+  };
+}
+
+function importTodos({ items, mode = "merge" }) {
+  const normalizedMode = mode === "replace" ? "replace" : "merge";
+  const normalizedItems = items.map((item, index) => normalizeImportItem(item, index));
+
+  saveUndoSnapshot();
+  const runImport = db.transaction((rows) => {
+    if (normalizedMode === "replace") {
+      deleteAllTodosQuery.run();
+      resetTodosSequenceQuery.run();
+    }
+
+    const keyToNewId = new Map();
+    const importedRows = [];
+
+    for (const row of rows) {
+      const result = insertImportedTodoQuery.run({
+        title: row.title,
+        project: row.project,
+        due_date: row.due_date,
+        parent_id: null,
+        completed: row.completed,
+        created_at: row.created_at,
+        completed_at: row.completed ? row.completed_at : null,
+      });
+
+      const newId = Number(result.lastInsertRowid);
+      keyToNewId.set(row.sourceKey, newId);
+      importedRows.push({ id: newId, parentKey: row.parentKey });
+    }
+
+    for (const row of importedRows) {
+      if (!row.parentKey) {
+        continue;
+      }
+      const parentId = keyToNewId.get(row.parentKey);
+      if (!parentId || parentId === row.id) {
+        continue;
+      }
+      updateImportedParentQuery.run({ id: row.id, parent_id: parentId });
+    }
+
+    clearOrphanParentsQuery.run();
+    return importedRows.length;
+  });
+
+  const count = runImport(normalizedItems);
+  return {
+    count,
+    mode: normalizedMode,
+  };
+}
+
+function exportTodos() {
+  return listAllTodosRawQuery.all().map((row) => ({
+    id: Number(row.id),
+    title: String(row.title),
+    project: String(row.project || "默认项目"),
+    due_date: row.due_date ? String(row.due_date) : null,
+    parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
+    completed: Boolean(row.completed),
+    created_at: String(row.created_at || ""),
+    completed_at: row.completed_at ? String(row.completed_at) : null,
+  }));
 }
 
 function getStats() {
@@ -464,6 +795,10 @@ module.exports = {
   deleteTodoTree,
   clearCompletedTodos,
   updateTodosBatch,
+  importTodos,
+  exportTodos,
+  hasUndoSnapshot,
+  undoLastOperation,
   getStats,
   listParentCandidates,
   listProjects,

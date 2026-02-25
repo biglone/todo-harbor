@@ -185,6 +185,9 @@
               <button id="bulkDueDateButton" class="secondary-button compact-button" type="button">
                 批量改到期日
               </button>
+              <button id="exportButton" class="secondary-button compact-button" type="button">导出JSON</button>
+              <button id="importButton" class="secondary-button compact-button" type="button">导入JSON</button>
+              <button id="undoButton" class="secondary-button compact-button" type="button">撤销上一步</button>
               <button id="clearCompletedButton" class="danger-button" type="button">清除已完成</button>
             </div>
             <div class="query-controls" aria-label="高级筛选">
@@ -215,6 +218,60 @@
         </div>
       </section>
     </main>
+
+    <div id="actionModal" class="modal is-hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-modal-close="true"></div>
+      <section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <header class="modal-head">
+          <h3 id="modalTitle">操作确认</h3>
+          <button type="button" id="modalCloseButton" class="modal-close" aria-label="关闭弹窗">关闭</button>
+        </header>
+        <form id="modalForm" class="modal-form">
+          <p id="modalDescription" class="modal-description"></p>
+
+          <label class="field is-hidden" id="modalProjectField" for="modalProjectInput">
+            <span>项目名</span>
+            <input id="modalProjectInput" type="text" maxlength="80" placeholder="请输入新的项目名" />
+          </label>
+
+          <label class="field is-hidden" id="modalDueDateField" for="modalDueDateInput">
+            <span>到期日期</span>
+            <input id="modalDueDateInput" type="date" />
+            <small>留空表示清除到期日。</small>
+          </label>
+
+          <label class="field is-hidden" id="modalImportModeField" for="modalImportModeSelect">
+            <span>导入模式</span>
+            <select id="modalImportModeSelect">
+              <option value="merge">合并导入（保留现有任务）</option>
+              <option value="replace">替换导入（清空后导入）</option>
+            </select>
+          </label>
+
+          <label class="field is-hidden" id="modalImportFileField" for="modalImportFileInput">
+            <span>导入文件（可选）</span>
+            <input id="modalImportFileInput" type="file" accept="application/json,.json" />
+            <small>选择文件后会自动填充到下方 JSON 文本框。</small>
+          </label>
+
+          <label class="field is-hidden" id="modalImportTextField" for="modalImportTextarea">
+            <span>JSON 内容</span>
+            <textarea
+              id="modalImportTextarea"
+              rows="8"
+              placeholder='{"items":[{"title":"示例任务","project":"默认项目"}]}'
+            ></textarea>
+          </label>
+
+          <p id="modalError" class="modal-error"></p>
+
+          <div class="modal-actions">
+            <button type="button" id="modalCancelButton" class="secondary-button">取消</button>
+            <button type="submit" id="modalSubmitButton">确认</button>
+          </div>
+        </form>
+      </section>
+    </div>
 
     <template id="todoTemplate">
       <article class="todo-item">
