@@ -553,6 +553,23 @@ button {
   margin-top: 8px;
 }
 
+.list-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.list-progress {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.list-actions.is-hidden {
+  display: none;
+}
+
 .group-section {
   margin-top: 12px;
   border-radius: 12px;
@@ -836,5 +853,14 @@ button {
 
   .query-controls > * {
     flex: 1 1 100%;
+  }
+
+  .list-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #loadMoreButton {
+    width: 100%;
   }
 }

@@ -9,6 +9,7 @@ const state = {
   dueTo: "",
   sort: "created_desc",
   dueScope: "all",
+  renderLimit: 60,
   busy: false,
   items: [],
   visibleItems: [],
@@ -54,6 +55,9 @@ const dueToInputEl = document.getElementById("dueToInput");
 const sortSelectEl = document.getElementById("sortSelect");
 const resetQueryButtonEl = document.getElementById("resetQueryButton");
 const dueSnapshotEl = document.getElementById("dueSnapshot");
+const listActionsEl = document.getElementById("listActions");
+const listProgressEl = document.getElementById("listProgress");
+const loadMoreButtonEl = document.getElementById("loadMoreButton");
 
 const filterButtons = document.querySelectorAll(".filter");
 const dueScopeButtons = document.querySelectorAll(".due-scope");
@@ -95,6 +99,9 @@ function setBusy(nextBusy) {
   }
   if (resetQueryButtonEl) {
     resetQueryButtonEl.disabled = nextBusy;
+  }
+  if (loadMoreButtonEl && !loadMoreButtonEl.hidden) {
+    loadMoreButtonEl.disabled = nextBusy;
   }
   for (const button of composeModeButtons) {
     button.disabled = nextBusy;
@@ -459,6 +466,10 @@ function renderTodoTree(container, nodes, depth, visited) {
 }
 
 function renderEmpty() {
+  if (listActionsEl) {
+    listActionsEl.classList.add("is-hidden");
+  }
+
   const emptyEl = document.createElement("div");
   emptyEl.className = "empty";
 
@@ -479,6 +490,24 @@ function renderEmpty() {
       ? "还没有已完成的待办。"
       : "当前没有待办，开始添加你的第一条任务。";
   todoListEl.appendChild(emptyEl);
+}
+
+function renderListActions(total, rendered) {
+  if (!listActionsEl || !listProgressEl || !loadMoreButtonEl) {
+    return;
+  }
+
+  if (total <= 0) {
+    listActionsEl.classList.add("is-hidden");
+    return;
+  }
+
+  listActionsEl.classList.remove("is-hidden");
+  listProgressEl.textContent = `已显示 ${rendered} / ${total}`;
+
+  const hasMore = rendered < total;
+  loadMoreButtonEl.hidden = !hasMore;
+  loadMoreButtonEl.disabled = state.busy || !hasMore;
 }
 
 function renderGroupedByProject(roots) {
@@ -568,24 +597,28 @@ function renderTodos(items) {
   todoListEl.innerHTML = "";
   const scopedItems = applyDueScopeFilter(items);
   state.visibleItems = scopedItems;
+  const renderItems = scopedItems.slice(0, Math.max(1, state.renderLimit));
 
-  if (!scopedItems.length) {
+  if (!renderItems.length) {
     renderEmpty();
     return;
   }
 
-  const roots = buildTodoTree(scopedItems);
+  const roots = buildTodoTree(renderItems);
   if (state.viewMode === "project") {
     renderGroupedByProject(roots);
+    renderListActions(scopedItems.length, renderItems.length);
     return;
   }
 
   if (state.viewMode === "date") {
     renderGroupedByDate(roots);
+    renderListActions(scopedItems.length, renderItems.length);
     return;
   }
 
   renderTodoTree(todoListEl, roots, 0, new Set());
+  renderListActions(scopedItems.length, renderItems.length);
 }
 
 function renderStats(stats) {
@@ -870,6 +903,7 @@ async function loadTodos({ silent = false } = {}) {
     return;
   }
 
+  state.renderLimit = 60;
   setBusy(true);
   if (!silent) {
     setMessage("正在同步数据...");
@@ -1201,6 +1235,7 @@ for (const button of dueScopeButtons) {
     }
 
     state.dueScope = button.dataset.dueScope || "all";
+    state.renderLimit = 60;
     renderDueScopeButtons();
     renderTodos(state.items);
     setMessage(`已切换到 ${button.textContent} 视图`);
@@ -1361,6 +1396,17 @@ if (bulkDueDateButtonEl) {
       return;
     }
     onBulkDueDateFiltered();
+  });
+}
+
+if (loadMoreButtonEl) {
+  loadMoreButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+
+    state.renderLimit += 60;
+    renderTodos(state.items);
   });
 }
 
