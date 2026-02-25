@@ -91,6 +91,15 @@ body {
   font-weight: 600;
 }
 
+.link-button {
+  background: none;
+  border: 0;
+  color: #0f6f66;
+  font-size: 0.84rem;
+  text-align: left;
+  padding: 0;
+}
+
 .eyebrow {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
@@ -214,6 +223,105 @@ h1 {
   color: #fff;
   padding: 11px 16px;
   min-width: 120px;
+}
+
+.reset-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(33, 54, 94, 0.18);
+  display: grid;
+  gap: 10px;
+}
+
+.reset-panel.is-hidden {
+  display: none;
+}
+
+.reset-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.account-panel {
+  padding: 16px;
+}
+
+.account-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.account-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #0f6f66;
+}
+
+.account-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.account-card {
+  border: 1px solid rgba(33, 54, 94, 0.12);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  display: grid;
+  gap: 10px;
+}
+
+.account-card h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.account-meta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.verify-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(183, 61, 52, 0.25);
+  color: #9a2e28;
+  background: rgba(183, 61, 52, 0.08);
+  font-size: 0.75rem;
+}
+
+.verify-status.is-ok {
+  border-color: rgba(36, 143, 82, 0.3);
+  color: #1f6b41;
+  background: rgba(36, 143, 82, 0.12);
+}
+
+.account-message {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.account-message.is-error {
+  color: var(--danger);
 }
 
 .composer-panel {
@@ -1004,6 +1112,11 @@ button {
 
   #authSubmitButton {
     width: 100%;
+  }
+
+  .reset-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .compose-modes {

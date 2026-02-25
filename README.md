@@ -44,6 +44,12 @@ npm run dev
 export SESSION_SECRET="your-strong-secret"
 ```
 
+如需强制邮箱验证后才能访问待办：
+
+```bash
+export REQUIRE_EMAIL_VERIFICATION=1
+```
+
 ## 自动化测试
 
 ```bash
@@ -97,6 +103,13 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+- `POST /api/auth/verification/request`（重新发送验证邮件）
+- `POST /api/auth/verify`（提交验证码）
+- `POST /api/auth/password/forgot`（请求密码重置）
+- `POST /api/auth/password/reset`（提交新密码）
+- `GET /api/account`（账号信息）
+- `POST /api/account/email`（修改邮箱，需当前密码）
+- `POST /api/account/password`（修改密码）
 - `GET /api/todos?filter=all|active|completed&q=&project=&dueFrom=YYYY-MM-DD&dueTo=YYYY-MM-DD&sort=created_desc|created_asc|due_asc|due_desc&dueScope=all|overdue|today|week|no_due&page=1&pageSize=60`
   - 返回 `pagination`（分页信息）与 `dueSnapshot`（到期分布快照）
 - `GET /api/todos/meta`（返回项目列表、可选父任务、undo 可用状态）
@@ -131,6 +144,11 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 
 - 所有请求与错误日志以 JSON 行输出到 stdout
 - 关键字段：`timestamp`、`method`、`path`、`status`、`durationMs`
+
+## 邮箱验证与密码重置说明
+
+- 本地/开发模式下，验证与重置码会直接返回在响应中并打印到日志，便于测试。
+- 生产环境建议接入邮件服务，隐藏验证码输出。
 
 ## 发布与回滚
 

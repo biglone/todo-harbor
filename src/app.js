@@ -2,6 +2,7 @@ const path = require("path");
 const express = require("express");
 const cookieSession = require("cookie-session");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const {
   listTodos,
   createTodo,
@@ -23,8 +24,16 @@ const {
   createUser,
   getUserByEmail,
   getUserById,
+  getUserByVerifyTokenHash,
+  getUserByResetTokenHash,
   countUsers,
   claimUnownedTodos,
+  setVerificationToken,
+  markEmailVerified,
+  setResetToken,
+  clearResetToken,
+  updateUserEmail,
+  updateUserPassword,
   dbFile,
 } = require("./db");
 
@@ -33,6 +42,10 @@ const VALID_SORTS = new Set(["created_desc", "created_asc", "due_asc", "due_desc
 const VALID_DUE_SCOPES = new Set(["all", "overdue", "today", "week", "no_due"]);
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
+const VERIFY_TOKEN_TTL_MINUTES = Number(process.env.VERIFY_TOKEN_TTL_MINUTES || 60 * 24);
+const RESET_TOKEN_TTL_MINUTES = Number(process.env.RESET_TOKEN_TTL_MINUTES || 30);
+const REQUIRE_EMAIL_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === "1";
+const INCLUDE_TOKENS_IN_RESPONSE = process.env.NODE_ENV !== "production";
 
 const app = express();
 
@@ -87,6 +100,41 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function generateToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function addMinutes(minutes) {
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString();
+}
+
+function isTokenExpired(expiresAt) {
+  if (!expiresAt) {
+    return true;
+  }
+  return Date.parse(expiresAt) <= Date.now();
+}
+
+function issueVerificationToken(userId) {
+  const token = generateToken();
+  const tokenHash = hashToken(token);
+  const expiresAt = addMinutes(VERIFY_TOKEN_TTL_MINUTES);
+  setVerificationToken(userId, tokenHash, expiresAt);
+  return { token, expiresAt };
+}
+
+function issueResetToken(userId) {
+  const token = generateToken();
+  const tokenHash = hashToken(token);
+  const expiresAt = addMinutes(RESET_TOKEN_TTL_MINUTES);
+  setResetToken(userId, tokenHash, expiresAt);
+  return { token, expiresAt };
+}
+
 function requireAuth(req, res, next) {
   const userId = Number(req.session?.userId);
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -100,6 +148,18 @@ function requireAuth(req, res, next) {
   }
 
   req.user = user;
+  return next();
+}
+
+function requireVerified(req, res, next) {
+  if (!REQUIRE_EMAIL_VERIFICATION) {
+    return next();
+  }
+
+  if (!req.user?.email_verified) {
+    return res.status(403).json({ error: "Email not verified" });
+  }
+
   return next();
 }
 
@@ -128,13 +188,21 @@ app.post("/api/auth/register", (req, res) => {
     claimUnownedTodos(user.id);
   }
 
+  const verification = issueVerificationToken(user.id);
+  if (INCLUDE_TOKENS_IN_RESPONSE) {
+    console.log(`Verify token for ${user.email}: ${verification.token}`);
+  }
+
   req.session.userId = user.id;
   req.session.email = user.email;
 
   return res.status(201).json({
     id: user.id,
     email: user.email,
+    emailVerified: Boolean(user.email_verified),
     created_at: user.created_at,
+    verifyToken: INCLUDE_TOKENS_IN_RESPONSE ? verification.token : undefined,
+    verifyExpiresAt: INCLUDE_TOKENS_IN_RESPONSE ? verification.expiresAt : undefined,
   });
 });
 
@@ -161,6 +229,7 @@ app.post("/api/auth/login", (req, res) => {
   return res.json({
     id: user.id,
     email: user.email,
+    emailVerified: Boolean(user.email_verified),
     created_at: user.created_at,
   });
 });
@@ -174,11 +243,172 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
   return res.json({
     id: req.user.id,
     email: req.user.email,
+    emailVerified: Boolean(req.user.email_verified),
     created_at: req.user.created_at,
   });
 });
 
-app.use("/api/todos", requireAuth);
+app.post("/api/auth/verification/request", requireAuth, (req, res) => {
+  if (req.user.email_verified) {
+    return res.json({ emailVerified: true });
+  }
+
+  const verification = issueVerificationToken(req.user.id);
+  if (INCLUDE_TOKENS_IN_RESPONSE) {
+    console.log(`Verify token for ${req.user.email}: ${verification.token}`);
+  }
+
+  return res.json({
+    emailVerified: false,
+    verifyToken: INCLUDE_TOKENS_IN_RESPONSE ? verification.token : undefined,
+    verifyExpiresAt: INCLUDE_TOKENS_IN_RESPONSE ? verification.expiresAt : undefined,
+  });
+});
+
+app.post("/api/auth/verify", (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  if (!token) {
+    return res.status(400).json({ error: "token is required" });
+  }
+
+  const tokenHash = hashToken(token);
+  const user = getUserByVerifyTokenHash(tokenHash);
+  if (!user) {
+    return res.status(400).json({ error: "invalid token" });
+  }
+
+  if (isTokenExpired(user.verify_token_expires)) {
+    return res.status(400).json({ error: "token expired" });
+  }
+
+  markEmailVerified(user.id);
+  return res.json({ ok: true });
+});
+
+app.post("/api/auth/password/forgot", (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ error: "email is invalid" });
+  }
+
+  const user = getUserByEmail(email);
+  if (!user) {
+    return res.json({ ok: true });
+  }
+
+  const reset = issueResetToken(user.id);
+  if (INCLUDE_TOKENS_IN_RESPONSE) {
+    console.log(`Reset token for ${user.email}: ${reset.token}`);
+  }
+
+  return res.json({
+    ok: true,
+    resetToken: INCLUDE_TOKENS_IN_RESPONSE ? reset.token : undefined,
+    resetExpiresAt: INCLUDE_TOKENS_IN_RESPONSE ? reset.expiresAt : undefined,
+  });
+});
+
+app.post("/api/auth/password/reset", (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  const newPassword = String(req.body?.password || "");
+
+  if (!token) {
+    return res.status(400).json({ error: "token is required" });
+  }
+
+  if (newPassword.length < 8 || newPassword.length > 72) {
+    return res.status(400).json({ error: "password must be 8-72 characters" });
+  }
+
+  const tokenHash = hashToken(token);
+  const user = getUserByResetTokenHash(tokenHash);
+  if (!user) {
+    return res.status(400).json({ error: "invalid token" });
+  }
+
+  if (isTokenExpired(user.reset_token_expires)) {
+    return res.status(400).json({ error: "token expired" });
+  }
+
+  const passwordHash = bcrypt.hashSync(newPassword, 10);
+  updateUserPassword(user.id, passwordHash);
+  clearResetToken(user.id);
+
+  return res.json({ ok: true });
+});
+
+app.get("/api/account", requireAuth, (req, res) => {
+  return res.json({
+    id: req.user.id,
+    email: req.user.email,
+    emailVerified: Boolean(req.user.email_verified),
+    created_at: req.user.created_at,
+  });
+});
+
+app.post("/api/account/email", requireAuth, (req, res) => {
+  const nextEmail = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+
+  if (!nextEmail || !isValidEmail(nextEmail)) {
+    return res.status(400).json({ error: "email is invalid" });
+  }
+
+  if (!password) {
+    return res.status(400).json({ error: "password is required" });
+  }
+
+  const current = getUserByEmail(req.user.email);
+  if (!current || !bcrypt.compareSync(password, current.password_hash)) {
+    return res.status(401).json({ error: "invalid credentials" });
+  }
+
+  const exists = getUserByEmail(nextEmail);
+  if (exists && exists.id !== req.user.id) {
+    return res.status(409).json({ error: "email already registered" });
+  }
+
+  const updated = updateUserEmail(req.user.id, nextEmail);
+  req.session.email = updated.email;
+
+  const verification = issueVerificationToken(updated.id);
+  if (INCLUDE_TOKENS_IN_RESPONSE) {
+    console.log(`Verify token for ${updated.email}: ${verification.token}`);
+  }
+
+  return res.json({
+    id: updated.id,
+    email: updated.email,
+    emailVerified: false,
+    verifyToken: INCLUDE_TOKENS_IN_RESPONSE ? verification.token : undefined,
+    verifyExpiresAt: INCLUDE_TOKENS_IN_RESPONSE ? verification.expiresAt : undefined,
+  });
+});
+
+app.post("/api/account/password", requireAuth, (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || "");
+  const newPassword = String(req.body?.newPassword || "");
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "currentPassword and newPassword are required" });
+  }
+
+  if (newPassword.length < 8 || newPassword.length > 72) {
+    return res.status(400).json({ error: "password must be 8-72 characters" });
+  }
+
+  const current = getUserByEmail(req.user.email);
+  if (!current || !bcrypt.compareSync(currentPassword, current.password_hash)) {
+    return res.status(401).json({ error: "invalid credentials" });
+  }
+
+  const passwordHash = bcrypt.hashSync(newPassword, 10);
+  updateUserPassword(req.user.id, passwordHash);
+
+  return res.json({ ok: true });
+});
+
+app.use("/api/todos", requireAuth, requireVerified);
 
 app.get("/api/todos", (req, res) => {
   const filter = String(req.query.filter || "all");

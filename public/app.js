@@ -81,6 +81,29 @@ const userBarEl = document.getElementById("userBar");
 const userEmailEl = document.getElementById("userEmail");
 const logoutButtonEl = document.getElementById("logoutButton");
 
+const resetToggleButtonEl = document.getElementById("resetToggleButton");
+const resetPanelEl = document.getElementById("resetPanel");
+const resetEmailEl = document.getElementById("resetEmail");
+const resetTokenEl = document.getElementById("resetToken");
+const resetNewPasswordEl = document.getElementById("resetNewPassword");
+const resetMessageEl = document.getElementById("resetMessage");
+const requestResetButtonEl = document.getElementById("requestResetButton");
+const confirmResetButtonEl = document.getElementById("confirmResetButton");
+
+const accountPanelEl = document.getElementById("accountPanel");
+const accountEmailEl = document.getElementById("accountEmail");
+const verifyStatusEl = document.getElementById("verifyStatus");
+const requestVerifyButtonEl = document.getElementById("requestVerifyButton");
+const verifyTokenInputEl = document.getElementById("verifyTokenInput");
+const verifyEmailButtonEl = document.getElementById("verifyEmailButton");
+const newEmailInputEl = document.getElementById("newEmailInput");
+const confirmEmailPasswordInputEl = document.getElementById("confirmEmailPasswordInput");
+const changeEmailButtonEl = document.getElementById("changeEmailButton");
+const currentPasswordInputEl = document.getElementById("currentPasswordInput");
+const newPasswordInputEl = document.getElementById("newPasswordInput");
+const changePasswordButtonEl = document.getElementById("changePasswordButton");
+const accountMessageEl = document.getElementById("accountMessage");
+
 const modalEl = document.getElementById("actionModal");
 const modalFormEl = document.getElementById("modalForm");
 const modalTitleEl = document.getElementById("modalTitle");
@@ -172,6 +195,18 @@ function setBusy(nextBusy) {
   for (const button of quickDateButtons) {
     button.disabled = locked;
   }
+  if (requestVerifyButtonEl) {
+    requestVerifyButtonEl.disabled = locked;
+  }
+  if (verifyEmailButtonEl) {
+    verifyEmailButtonEl.disabled = locked;
+  }
+  if (changeEmailButtonEl) {
+    changeEmailButtonEl.disabled = locked;
+  }
+  if (changePasswordButtonEl) {
+    changePasswordButtonEl.disabled = locked;
+  }
 }
 
 function setAuthBusy(isBusy) {
@@ -201,9 +236,45 @@ function setAuthMessage(text) {
   authMessageEl.textContent = text || "";
 }
 
+function setResetMessage(text) {
+  if (resetMessageEl) {
+    resetMessageEl.textContent = text || "";
+  }
+}
+
+function setAccountMessage(text, isError = false) {
+  if (!accountMessageEl) {
+    return;
+  }
+  accountMessageEl.textContent = text || "";
+  accountMessageEl.classList.toggle("is-error", Boolean(isError));
+}
+
 function setSyncStatus(text, isError = false) {
   syncStatusEl.textContent = text;
   syncStatusEl.classList.toggle("is-error", Boolean(isError));
+}
+
+function updateAccountStatus(user) {
+  if (!user) {
+    if (accountEmailEl) {
+      accountEmailEl.textContent = "-";
+    }
+    if (verifyStatusEl) {
+      verifyStatusEl.textContent = "未验证";
+      verifyStatusEl.classList.remove("is-ok");
+    }
+    return;
+  }
+
+  if (accountEmailEl) {
+    accountEmailEl.textContent = user.email || "-";
+  }
+  if (verifyStatusEl) {
+    const verified = Boolean(user.emailVerified);
+    verifyStatusEl.textContent = verified ? "已验证" : "未验证";
+    verifyStatusEl.classList.toggle("is-ok", verified);
+  }
 }
 
 function setAccessEnabled(enabled, user = null) {
@@ -213,12 +284,17 @@ function setAccessEnabled(enabled, user = null) {
   if (authPanelEl) {
     authPanelEl.classList.toggle("is-hidden", enabled);
   }
+  if (accountPanelEl) {
+    accountPanelEl.classList.toggle("is-hidden", !enabled);
+  }
   if (userBarEl) {
     userBarEl.classList.toggle("is-hidden", !enabled);
   }
   if (userEmailEl) {
     userEmailEl.textContent = enabled && user ? user.email : "";
   }
+
+  updateAccountStatus(user);
 
   if (!enabled) {
     resetListPagination();
@@ -1407,6 +1483,16 @@ async function onAuthSubmit(event) {
 
     setAccessEnabled(true, user);
     setSyncStatus("已连接");
+
+    if (user.verifyToken) {
+      setAccountMessage(`已发送验证邮件，开发模式验证码：${user.verifyToken}`);
+      if (verifyTokenInputEl) {
+        verifyTokenInputEl.value = user.verifyToken;
+      }
+    } else if (!user.emailVerified) {
+      setAccountMessage("邮箱尚未验证，可在账号设置中发送验证邮件。");
+    }
+
     setMessage(state.authMode === "register" ? "注册成功，已登录" : "登录成功");
     await loadTodos({ silent: true });
   } catch (error) {
@@ -1427,6 +1513,164 @@ async function onLogout() {
     setMessage(error.message || "退出失败", true);
   } finally {
     setBusy(false);
+  }
+}
+
+async function onRequestVerify() {
+  if (!state.accessEnabled) {
+    return;
+  }
+  setAccountMessage("正在发送验证邮件...");
+
+  try {
+    const result = await requestJSON("/api/auth/verification/request", { method: "POST" });
+    if (result.emailVerified) {
+      setAccountMessage("邮箱已验证");
+      updateAccountStatus({ ...state.user, emailVerified: true });
+      return;
+    }
+    if (result.verifyToken) {
+      setAccountMessage(`验证邮件已发送，开发模式验证码：${result.verifyToken}`);
+      if (verifyTokenInputEl) {
+        verifyTokenInputEl.value = result.verifyToken;
+      }
+    } else {
+      setAccountMessage("验证邮件已发送，请检查邮箱");
+    }
+  } catch (error) {
+    setAccountMessage(error.message || "发送失败", true);
+  }
+}
+
+async function onVerifyEmail() {
+  const token = verifyTokenInputEl.value.trim();
+  if (!token) {
+    setAccountMessage("请输入验证码", true);
+    return;
+  }
+
+  setAccountMessage("正在验证...");
+  try {
+    await requestJSON("/api/auth/verify", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    setAccountMessage("邮箱验证成功");
+    const me = await requestJSON("/api/auth/me");
+    setAccessEnabled(true, me);
+  } catch (error) {
+    setAccountMessage(error.message || "验证失败", true);
+  }
+}
+
+async function onChangeEmail() {
+  const email = newEmailInputEl.value.trim();
+  const password = confirmEmailPasswordInputEl.value;
+
+  if (!email) {
+    setAccountMessage("请输入新邮箱", true);
+    return;
+  }
+  if (!password) {
+    setAccountMessage("请输入当前密码", true);
+    return;
+  }
+
+  setAccountMessage("正在更新邮箱...");
+  try {
+    const result = await requestJSON("/api/account/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    setAccountMessage("邮箱已更新，请完成验证");
+    if (result.verifyToken && verifyTokenInputEl) {
+      verifyTokenInputEl.value = result.verifyToken;
+    }
+    setAccessEnabled(true, {
+      ...state.user,
+      email: result.email,
+      emailVerified: false,
+    });
+    newEmailInputEl.value = "";
+    confirmEmailPasswordInputEl.value = "";
+  } catch (error) {
+    setAccountMessage(error.message || "更新失败", true);
+  }
+}
+
+async function onChangePassword() {
+  const currentPassword = currentPasswordInputEl.value;
+  const newPassword = newPasswordInputEl.value;
+
+  if (!currentPassword || !newPassword) {
+    setAccountMessage("请输入当前密码和新密码", true);
+    return;
+  }
+  if (newPassword.length < 8) {
+    setAccountMessage("新密码至少 8 位", true);
+    return;
+  }
+
+  setAccountMessage("正在更新密码...");
+  try {
+    await requestJSON("/api/account/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    setAccountMessage("密码更新成功");
+    currentPasswordInputEl.value = "";
+    newPasswordInputEl.value = "";
+  } catch (error) {
+    setAccountMessage(error.message || "更新失败", true);
+  }
+}
+
+async function onRequestPasswordReset() {
+  const email = resetEmailEl.value.trim() || authEmailEl.value.trim();
+  if (!email) {
+    setResetMessage("请输入邮箱");
+    return;
+  }
+
+  setResetMessage("正在发送重置码...");
+  try {
+    const result = await requestJSON("/api/auth/password/forgot", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    if (result.resetToken) {
+      resetTokenEl.value = result.resetToken;
+      setResetMessage(`重置码已生成（开发模式）：${result.resetToken}`);
+    } else {
+      setResetMessage("重置码已发送，如存在该邮箱请查收");
+    }
+  } catch (error) {
+    setResetMessage(error.message || "发送失败");
+  }
+}
+
+async function onConfirmPasswordReset() {
+  const token = resetTokenEl.value.trim();
+  const password = resetNewPasswordEl.value;
+
+  if (!token) {
+    setResetMessage("请输入重置码");
+    return;
+  }
+  if (!password || password.length < 8) {
+    setResetMessage("新密码至少 8 位");
+    return;
+  }
+
+  setResetMessage("正在重置密码...");
+  try {
+    await requestJSON("/api/auth/password/reset", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    });
+    setResetMessage("密码已重置，请使用新密码登录");
+  } catch (error) {
+    setResetMessage(error.message || "重置失败");
   }
 }
 
@@ -1854,6 +2098,66 @@ if (logoutButtonEl) {
       return;
     }
     onLogout();
+  });
+}
+
+if (resetToggleButtonEl) {
+  resetToggleButtonEl.addEventListener("click", () => {
+    if (!resetPanelEl) {
+      return;
+    }
+    resetPanelEl.classList.toggle("is-hidden");
+    if (!resetPanelEl.classList.contains("is-hidden") && resetEmailEl) {
+      resetEmailEl.value = authEmailEl.value.trim();
+    }
+  });
+}
+
+if (requestResetButtonEl) {
+  requestResetButtonEl.addEventListener("click", () => {
+    onRequestPasswordReset();
+  });
+}
+
+if (confirmResetButtonEl) {
+  confirmResetButtonEl.addEventListener("click", () => {
+    onConfirmPasswordReset();
+  });
+}
+
+if (requestVerifyButtonEl) {
+  requestVerifyButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onRequestVerify();
+  });
+}
+
+if (verifyEmailButtonEl) {
+  verifyEmailButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onVerifyEmail();
+  });
+}
+
+if (changeEmailButtonEl) {
+  changeEmailButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onChangeEmail();
+  });
+}
+
+if (changePasswordButtonEl) {
+  changePasswordButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onChangePassword();
   });
 }
 

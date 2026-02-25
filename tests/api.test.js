@@ -44,7 +44,7 @@ async function registerAndLogin(request) {
   const password = "password123";
   const res = await request.post("/api/auth/register").send({ email, password });
   assert.equal(res.status, 201);
-  return res.body;
+  return { ...res.body, password };
 }
 
 async function createTodo(request, payload) {
@@ -241,5 +241,65 @@ describe("Todos API", () => {
 
     const afterUndo = await listTodos(request);
     assert.equal(afterUndo.items.length, 3);
+  });
+
+  test("email verification flow", async () => {
+    const request = createTestRequest();
+    const user = await registerAndLogin(request);
+    assert.equal(user.emailVerified, false);
+    assert.ok(user.verifyToken);
+
+    const verifyRes = await request.post("/api/auth/verify").send({ token: user.verifyToken });
+    assert.equal(verifyRes.status, 200);
+
+    const me = await request.get("/api/auth/me");
+    assert.equal(me.status, 200);
+    assert.equal(me.body.emailVerified, true);
+  });
+
+  test("password reset flow", async () => {
+    const request = createTestRequest();
+    const user = await registerAndLogin(request);
+
+    const logout = await request.post("/api/auth/logout");
+    assert.equal(logout.status, 200);
+
+    const forgot = await request.post("/api/auth/password/forgot").send({ email: user.email });
+    assert.equal(forgot.status, 200);
+    assert.ok(forgot.body.resetToken);
+
+    const reset = await request.post("/api/auth/password/reset").send({
+      token: forgot.body.resetToken,
+      password: "newpassword123",
+    });
+    assert.equal(reset.status, 200);
+
+    const login = await request.post("/api/auth/login").send({
+      email: user.email,
+      password: "newpassword123",
+    });
+    assert.equal(login.status, 200);
+  });
+
+  test("account settings update", async () => {
+    const request = createTestRequest();
+    const user = await registerAndLogin(request);
+
+    const emailUpdate = await request.post("/api/account/email").send({
+      email: `updated-${Date.now()}@example.com`,
+      password: user.password,
+    });
+    assert.equal(emailUpdate.status, 200);
+    assert.equal(emailUpdate.body.emailVerified, false);
+    assert.ok(emailUpdate.body.verifyToken);
+
+    const verify = await request.post("/api/auth/verify").send({ token: emailUpdate.body.verifyToken });
+    assert.equal(verify.status, 200);
+
+    const passUpdate = await request.post("/api/account/password").send({
+      currentPassword: user.password,
+      newPassword: "nextpassword123",
+    });
+    assert.equal(passUpdate.status, 200);
   });
 });

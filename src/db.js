@@ -45,6 +45,11 @@ const createTablesSQL = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    verify_token_hash TEXT,
+    verify_token_expires TEXT,
+    reset_token_hash TEXT,
+    reset_token_expires TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -62,6 +67,33 @@ const createTablesSQL = `
 `;
 
 db.exec(createTablesSQL);
+
+const userColumns = new Set(
+  db
+    .prepare(`PRAGMA table_info(users)`)
+    .all()
+    .map((column) => column.name),
+);
+
+if (!userColumns.has("email_verified")) {
+  db.exec(`ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0;`);
+}
+
+if (!userColumns.has("verify_token_hash")) {
+  db.exec(`ALTER TABLE users ADD COLUMN verify_token_hash TEXT;`);
+}
+
+if (!userColumns.has("verify_token_expires")) {
+  db.exec(`ALTER TABLE users ADD COLUMN verify_token_expires TEXT;`);
+}
+
+if (!userColumns.has("reset_token_hash")) {
+  db.exec(`ALTER TABLE users ADD COLUMN reset_token_hash TEXT;`);
+}
+
+if (!userColumns.has("reset_token_expires")) {
+  db.exec(`ALTER TABLE users ADD COLUMN reset_token_expires TEXT;`);
+}
 
 const tableColumns = new Set(
   db
@@ -92,6 +124,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_project ON todos (project);
   CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos (due_date);
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
+  CREATE INDEX IF NOT EXISTS idx_users_verify_token_hash ON users (verify_token_hash);
+  CREATE INDEX IF NOT EXISTS idx_users_reset_token_hash ON users (reset_token_hash);
 `);
 
 const createUserQuery = db.prepare(`
@@ -100,14 +134,78 @@ const createUserQuery = db.prepare(`
 `);
 
 const getUserByEmailQuery = db.prepare(`
-  SELECT id, email, password_hash, created_at
+  SELECT id,
+    email,
+    password_hash,
+    email_verified,
+    verify_token_hash,
+    verify_token_expires,
+    reset_token_hash,
+    reset_token_expires,
+    created_at
   FROM users
   WHERE email = @email
 `);
 
 const getUserByIdQuery = db.prepare(`
-  SELECT id, email, created_at
+  SELECT id, email, email_verified, created_at
   FROM users
+  WHERE id = @id
+`);
+
+const getUserByVerifyTokenQuery = db.prepare(`
+  SELECT id, email, email_verified, verify_token_hash, verify_token_expires, created_at
+  FROM users
+  WHERE verify_token_hash = @hash
+`);
+
+const getUserByResetTokenQuery = db.prepare(`
+  SELECT id, email, reset_token_hash, reset_token_expires, created_at
+  FROM users
+  WHERE reset_token_hash = @hash
+`);
+
+const setVerificationTokenQuery = db.prepare(`
+  UPDATE users
+  SET verify_token_hash = @hash,
+      verify_token_expires = @expires
+  WHERE id = @id
+`);
+
+const markEmailVerifiedQuery = db.prepare(`
+  UPDATE users
+  SET email_verified = 1,
+      verify_token_hash = NULL,
+      verify_token_expires = NULL
+  WHERE id = @id
+`);
+
+const setResetTokenQuery = db.prepare(`
+  UPDATE users
+  SET reset_token_hash = @hash,
+      reset_token_expires = @expires
+  WHERE id = @id
+`);
+
+const clearResetTokenQuery = db.prepare(`
+  UPDATE users
+  SET reset_token_hash = NULL,
+      reset_token_expires = NULL
+  WHERE id = @id
+`);
+
+const updateUserEmailQuery = db.prepare(`
+  UPDATE users
+  SET email = @email,
+      email_verified = 0,
+      verify_token_hash = NULL,
+      verify_token_expires = NULL
+  WHERE id = @id
+`);
+
+const updateUserPasswordQuery = db.prepare(`
+  UPDATE users
+  SET password_hash = @password_hash
   WHERE id = @id
 `);
 
@@ -856,6 +954,14 @@ function getUserById(id) {
   return getUserByIdQuery.get({ id }) || null;
 }
 
+function getUserByVerifyTokenHash(hash) {
+  return getUserByVerifyTokenQuery.get({ hash }) || null;
+}
+
+function getUserByResetTokenHash(hash) {
+  return getUserByResetTokenQuery.get({ hash }) || null;
+}
+
 function countUsers() {
   const row = countUsersQuery.get() || { total: 0 };
   return Number(row.total || 0);
@@ -865,6 +971,45 @@ function claimUnownedTodos(userId) {
   const userIdValue = requireUserId(userId);
   const result = claimUnownedTodosQuery.run({ user_id: userIdValue });
   return Number(result.changes || 0);
+}
+
+function setVerificationToken(userId, tokenHash, expiresAt) {
+  const userIdValue = requireUserId(userId);
+  setVerificationTokenQuery.run({
+    id: userIdValue,
+    hash: tokenHash,
+    expires: expiresAt,
+  });
+}
+
+function markEmailVerified(userId) {
+  const userIdValue = requireUserId(userId);
+  markEmailVerifiedQuery.run({ id: userIdValue });
+}
+
+function setResetToken(userId, tokenHash, expiresAt) {
+  const userIdValue = requireUserId(userId);
+  setResetTokenQuery.run({
+    id: userIdValue,
+    hash: tokenHash,
+    expires: expiresAt,
+  });
+}
+
+function clearResetToken(userId) {
+  const userIdValue = requireUserId(userId);
+  clearResetTokenQuery.run({ id: userIdValue });
+}
+
+function updateUserEmail(userId, email) {
+  const userIdValue = requireUserId(userId);
+  updateUserEmailQuery.run({ id: userIdValue, email });
+  return getUserById(userIdValue);
+}
+
+function updateUserPassword(userId, passwordHash) {
+  const userIdValue = requireUserId(userId);
+  updateUserPasswordQuery.run({ id: userIdValue, password_hash: passwordHash });
 }
 
 module.exports = {
@@ -889,6 +1034,14 @@ module.exports = {
   createUser,
   getUserByEmail,
   getUserById,
+  getUserByVerifyTokenHash,
+  getUserByResetTokenHash,
   countUsers,
   claimUnownedTodos,
+  setVerificationToken,
+  markEmailVerified,
+  setResetToken,
+  clearResetToken,
+  updateUserEmail,
+  updateUserPassword,
 };
