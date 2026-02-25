@@ -53,10 +53,20 @@ const listTodosQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
   WHERE
-    @filter = 'all'
-    OR (@filter = 'active' AND completed = 0)
-    OR (@filter = 'completed' AND completed = 1)
-  ORDER BY completed ASC, id DESC
+    (
+      @filter = 'all'
+      OR (@filter = 'active' AND completed = 0)
+      OR (@filter = 'completed' AND completed = 1)
+    )
+    AND (@project = '' OR project = @project)
+    AND (
+      @keyword = ''
+      OR title LIKE '%' || @keyword || '%'
+      OR project LIKE '%' || @keyword || '%'
+    )
+    AND (@due_from = '' OR (due_date IS NOT NULL AND due_date >= @due_from))
+    AND (@due_to = '' OR (due_date IS NOT NULL AND due_date <= @due_to))
+  ORDER BY id DESC
 `);
 
 const createTodoQuery = db.prepare(`
@@ -146,8 +156,77 @@ function mapTodo(row) {
   };
 }
 
-function listTodos(filter = "all") {
-  return listTodosQuery.all({ filter }).map(mapTodo);
+function compareDueDate(a, b) {
+  const hasDueA = Boolean(a.due_date);
+  const hasDueB = Boolean(b.due_date);
+
+  if (!hasDueA && !hasDueB) {
+    return 0;
+  }
+
+  if (!hasDueA) {
+    return 1;
+  }
+
+  if (!hasDueB) {
+    return -1;
+  }
+
+  return a.due_date.localeCompare(b.due_date);
+}
+
+function sortTodos(items, sort) {
+  const sorted = [...items];
+  switch (sort) {
+    case "created_asc":
+      sorted.sort((a, b) => a.id - b.id);
+      return sorted;
+    case "due_asc":
+      sorted.sort((a, b) => {
+        const dueCompare = compareDueDate(a, b);
+        if (dueCompare !== 0) {
+          return dueCompare;
+        }
+        return b.id - a.id;
+      });
+      return sorted;
+    case "due_desc":
+      sorted.sort((a, b) => {
+        const dueCompare = compareDueDate(a, b);
+        if (dueCompare !== 0) {
+          return -dueCompare;
+        }
+        return b.id - a.id;
+      });
+      return sorted;
+    default:
+      sorted.sort((a, b) => b.id - a.id);
+      return sorted;
+  }
+}
+
+function listTodos(options = "all") {
+  const normalizedOptions =
+    typeof options === "string"
+      ? {
+          filter: options,
+          project: "",
+          keyword: "",
+          due_from: "",
+          due_to: "",
+          sort: "created_desc",
+        }
+      : {
+          filter: String(options.filter || "all"),
+          project: String(options.project || "").trim(),
+          keyword: String(options.keyword || "").trim(),
+          due_from: String(options.dueFrom || "").trim(),
+          due_to: String(options.dueTo || "").trim(),
+          sort: String(options.sort || "created_desc").trim(),
+        };
+
+  const rows = listTodosQuery.all(normalizedOptions).map(mapTodo);
+  return sortTodos(rows, normalizedOptions.sort);
 }
 
 function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {

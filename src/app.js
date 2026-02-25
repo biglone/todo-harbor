@@ -16,6 +16,7 @@ const {
 } = require("./db");
 
 const VALID_FILTERS = new Set(["all", "active", "completed"]);
+const VALID_SORTS = new Set(["created_desc", "created_asc", "due_asc", "due_desc"]);
 const app = express();
 
 app.use(express.json());
@@ -36,10 +37,47 @@ app.get("/api/todos", (req, res) => {
     });
   }
 
+  const keyword = String(req.query.q || "").trim();
+  const project = String(req.query.project || "").trim();
+  const dueFrom = String(req.query.dueFrom || "").trim();
+  const dueTo = String(req.query.dueTo || "").trim();
+  const sort = String(req.query.sort || "created_desc").trim();
+
+  if (dueFrom && !isValidDateString(dueFrom)) {
+    return res.status(400).json({
+      error: "dueFrom must be a valid date in YYYY-MM-DD format",
+    });
+  }
+
+  if (dueTo && !isValidDateString(dueTo)) {
+    return res.status(400).json({
+      error: "dueTo must be a valid date in YYYY-MM-DD format",
+    });
+  }
+
+  if (dueFrom && dueTo && dueFrom > dueTo) {
+    return res.status(400).json({
+      error: "dueFrom cannot be later than dueTo",
+    });
+  }
+
+  if (!VALID_SORTS.has(sort)) {
+    return res.status(400).json({
+      error: "Invalid sort. Allowed values: created_desc, created_asc, due_asc, due_desc",
+    });
+  }
+
   return res.json({
     filter,
     stats: getStats(),
-    items: listTodos(filter),
+    items: listTodos({
+      filter,
+      project,
+      keyword,
+      dueFrom,
+      dueTo,
+      sort,
+    }),
   });
 });
 

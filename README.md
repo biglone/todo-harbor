@@ -74,7 +74,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 ## 已实现 API
 
 - `GET /api/health`
-- `GET /api/todos?filter=all|active|completed`
+- `GET /api/todos?filter=all|active|completed&q=&project=&dueFrom=YYYY-MM-DD&dueTo=YYYY-MM-DD&sort=created_desc|created_asc|due_asc|due_desc`
 - `GET /api/todos/meta`（返回项目列表与可选父任务）
 - `POST /api/todos`（body 支持）
   - `title: string`（必填）

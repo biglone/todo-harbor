@@ -3,6 +3,11 @@ const state = {
   viewMode: "flat",
   composeMode: "single",
   editingTodoId: null,
+  searchKeyword: "",
+  filterProject: "",
+  dueFrom: "",
+  dueTo: "",
+  sort: "created_desc",
   busy: false,
   items: [],
   projects: [],
@@ -37,6 +42,12 @@ const countAllEl = document.getElementById("countAll");
 const countActiveEl = document.getElementById("countActive");
 const countCompletedEl = document.getElementById("countCompleted");
 const clearCompletedButtonEl = document.getElementById("clearCompletedButton");
+const searchInputEl = document.getElementById("searchInput");
+const projectFilterSelectEl = document.getElementById("projectFilterSelect");
+const dueFromInputEl = document.getElementById("dueFromInput");
+const dueToInputEl = document.getElementById("dueToInput");
+const sortSelectEl = document.getElementById("sortSelect");
+const resetQueryButtonEl = document.getElementById("resetQueryButton");
 
 const filterButtons = document.querySelectorAll(".filter");
 const viewModeButtons = document.querySelectorAll(".view-mode");
@@ -50,6 +61,24 @@ function setBusy(nextBusy) {
   if (clearCompletedButtonEl) {
     const completedCount = Number(countCompletedEl.textContent || 0);
     clearCompletedButtonEl.disabled = nextBusy || completedCount <= 0;
+  }
+  if (searchInputEl) {
+    searchInputEl.disabled = nextBusy;
+  }
+  if (projectFilterSelectEl) {
+    projectFilterSelectEl.disabled = nextBusy;
+  }
+  if (dueFromInputEl) {
+    dueFromInputEl.disabled = nextBusy;
+  }
+  if (dueToInputEl) {
+    dueToInputEl.disabled = nextBusy;
+  }
+  if (sortSelectEl) {
+    sortSelectEl.disabled = nextBusy;
+  }
+  if (resetQueryButtonEl) {
+    resetQueryButtonEl.disabled = nextBusy;
   }
   for (const button of composeModeButtons) {
     button.disabled = nextBusy;
@@ -497,6 +526,38 @@ function renderViewModeButtons() {
   }
 }
 
+function syncQueryStateFromControls() {
+  state.searchKeyword = searchInputEl ? searchInputEl.value.trim() : "";
+  state.filterProject = projectFilterSelectEl ? projectFilterSelectEl.value : "";
+  state.dueFrom = dueFromInputEl ? dueFromInputEl.value : "";
+  state.dueTo = dueToInputEl ? dueToInputEl.value : "";
+  state.sort = sortSelectEl ? sortSelectEl.value : "created_desc";
+}
+
+function buildTodoQueryURL() {
+  const params = new URLSearchParams();
+  params.set("filter", state.filter);
+  params.set("sort", state.sort || "created_desc");
+
+  if (state.searchKeyword) {
+    params.set("q", state.searchKeyword);
+  }
+
+  if (state.filterProject) {
+    params.set("project", state.filterProject);
+  }
+
+  if (state.dueFrom) {
+    params.set("dueFrom", state.dueFrom);
+  }
+
+  if (state.dueTo) {
+    params.set("dueTo", state.dueTo);
+  }
+
+  return `/api/todos?${params.toString()}`;
+}
+
 function renderProjectSuggestions(projects) {
   projectSuggestionsEl.innerHTML = "";
   for (const project of projects) {
@@ -504,6 +565,36 @@ function renderProjectSuggestions(projects) {
     option.value = project.name;
     projectSuggestionsEl.appendChild(option);
   }
+}
+
+function renderProjectFilterOptions(projects) {
+  if (!projectFilterSelectEl) {
+    return;
+  }
+
+  const currentValue = state.filterProject;
+  projectFilterSelectEl.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "全部项目";
+  projectFilterSelectEl.appendChild(allOption);
+
+  const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  for (const project of sorted) {
+    const option = document.createElement("option");
+    option.value = project.name;
+    option.textContent = `${project.name} (${project.count})`;
+    projectFilterSelectEl.appendChild(option);
+  }
+
+  if (currentValue && [...projectFilterSelectEl.options].some((option) => option.value === currentValue)) {
+    projectFilterSelectEl.value = currentValue;
+    return;
+  }
+
+  state.filterProject = "";
+  projectFilterSelectEl.value = "";
 }
 
 function renderProjectChips(projects) {
@@ -621,6 +712,12 @@ async function requestJSON(url, options = {}) {
 }
 
 async function loadTodos({ silent = false } = {}) {
+  syncQueryStateFromControls();
+  if (state.dueFrom && state.dueTo && state.dueFrom > state.dueTo) {
+    setMessage("筛选日期范围无效：起始日期不能晚于截止日期", true);
+    return;
+  }
+
   setBusy(true);
   if (!silent) {
     setMessage("正在同步数据...");
@@ -628,7 +725,7 @@ async function loadTodos({ silent = false } = {}) {
 
   try {
     const [todoPayload, metaPayload] = await Promise.all([
-      requestJSON(`/api/todos?filter=${encodeURIComponent(state.filter)}`),
+      requestJSON(buildTodoQueryURL()),
       requestJSON("/api/todos/meta"),
     ]);
 
@@ -639,6 +736,7 @@ async function loadTodos({ silent = false } = {}) {
     renderStats(todoPayload.stats || {});
     renderTodos(state.items);
     renderProjectSuggestions(state.projects);
+    renderProjectFilterOptions(state.projects);
     renderProjectChips(state.projects);
     renderParentOptions(state.parents);
     renderFilterButtons();
@@ -825,6 +923,26 @@ async function onClearCompleted() {
   }
 }
 
+function resetQueryFilters() {
+  if (searchInputEl) {
+    searchInputEl.value = "";
+  }
+  if (projectFilterSelectEl) {
+    projectFilterSelectEl.value = "";
+  }
+  if (dueFromInputEl) {
+    dueFromInputEl.value = "";
+  }
+  if (dueToInputEl) {
+    dueToInputEl.value = "";
+  }
+  if (sortSelectEl) {
+    sortSelectEl.value = "created_desc";
+  }
+
+  syncQueryStateFromControls();
+}
+
 for (const button of filterButtons) {
   button.addEventListener("click", async () => {
     if (state.busy) {
@@ -871,6 +989,69 @@ for (const button of quickDateButtons) {
     date.setDate(date.getDate() + offset);
     dueDateInputEl.value = formatDateForInput(date);
     updateComposerSummary();
+  });
+}
+
+let searchDebounceTimer = null;
+if (searchInputEl) {
+  searchInputEl.addEventListener("input", () => {
+    if (state.busy) {
+      return;
+    }
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+    }
+
+    searchDebounceTimer = setTimeout(() => {
+      loadTodos();
+    }, 260);
+  });
+}
+
+if (projectFilterSelectEl) {
+  projectFilterSelectEl.addEventListener("change", () => {
+    if (state.busy) {
+      return;
+    }
+    loadTodos();
+  });
+}
+
+if (dueFromInputEl) {
+  dueFromInputEl.addEventListener("change", () => {
+    if (state.busy) {
+      return;
+    }
+    loadTodos();
+  });
+}
+
+if (dueToInputEl) {
+  dueToInputEl.addEventListener("change", () => {
+    if (state.busy) {
+      return;
+    }
+    loadTodos();
+  });
+}
+
+if (sortSelectEl) {
+  sortSelectEl.addEventListener("change", () => {
+    if (state.busy) {
+      return;
+    }
+    loadTodos();
+  });
+}
+
+if (resetQueryButtonEl) {
+  resetQueryButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    resetQueryFilters();
+    loadTodos();
   });
 }
 
