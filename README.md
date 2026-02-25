@@ -5,9 +5,11 @@
 
 ## 功能
 
-- 新增待办事项
+- 新增待办事项（支持填写项目、任务日期、父任务）
 - 切换完成/未完成状态
 - 按 `全部 / 进行中 / 已完成` 过滤
+- 层级任务（父任务/子任务）展示
+- 视图切换：普通视图 / 按项目分组 / 按日期分组
 - 统计总数、进行中、已完成数量
 - SQLite 持久化保存（重启容器后数据仍保留）
 
@@ -72,5 +74,10 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 
 - `GET /api/health`
 - `GET /api/todos?filter=all|active|completed`
-- `POST /api/todos`（body: `{ "title": "..." }`）
+- `GET /api/todos/meta`（返回项目列表与可选父任务）
+- `POST /api/todos`（body 支持）
+  - `title: string`（必填）
+  - `project?: string`（可选，默认 `默认项目`）
+  - `dueDate?: YYYY-MM-DD`（可选）
+  - `parentId?: number`（可选，表示创建子任务）
 - `PATCH /api/todos/:id/toggle`
