@@ -123,12 +123,18 @@ h1 {
 
 .composer-form {
   display: grid;
+  gap: 12px;
+}
+
+.composer-main {
+  display: grid;
   grid-template-columns: 1fr auto;
   gap: 12px;
 }
 
 input[type="text"],
-input {
+input,
+select {
   border: 1px solid rgba(33, 54, 94, 0.18);
   border-radius: 12px;
   font: inherit;
@@ -137,7 +143,25 @@ input {
   color: var(--text);
 }
 
+.composer-extra {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 input:focus-visible,
+select:focus-visible,
 button:focus-visible {
   outline: 3px solid rgba(10, 127, 116, 0.25);
   outline-offset: 2px;
@@ -197,13 +221,19 @@ button {
 .board-toolbar {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
+}
+
+.toolbar-controls {
+  display: grid;
+  gap: 8px;
 }
 
 .filters {
   display: inline-flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .filter {
@@ -218,10 +248,29 @@ button {
   color: #fff;
 }
 
+.view-modes {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.view-mode {
+  padding: 8px 12px;
+  background: #fff3e7;
+  color: #54311d;
+  font-size: 0.9rem;
+}
+
+.view-mode.is-active {
+  background: linear-gradient(140deg, #f26d4b, #cb4d39);
+  color: #fff;
+}
+
 .hint {
   margin: 0;
   color: var(--muted);
   font-size: 0.84rem;
+  max-width: 360px;
 }
 
 .message {
@@ -236,9 +285,42 @@ button {
 }
 
 .todo-list {
+  margin-top: 8px;
+}
+
+.group-section {
+  margin-top: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(33, 54, 94, 0.12);
+  background: rgba(255, 255, 255, 0.66);
+  padding: 10px;
+}
+
+.group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed rgba(33, 54, 94, 0.2);
+}
+
+.group-head h3 {
   margin: 0;
-  padding: 0;
-  list-style: none;
+  font-size: 0.95rem;
+}
+
+.group-head span {
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.group-body {
+  margin-top: 8px;
+}
+
+.group-body .todo-item:first-child {
+  margin-top: 0;
 }
 
 .todo-item {
@@ -250,6 +332,11 @@ button {
   border-radius: 14px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.84);
+}
+
+.todo-item.is-child {
+  border-style: dashed;
+  background: rgba(248, 251, 255, 0.88);
 }
 
 .todo-item.is-completed {
@@ -289,8 +376,37 @@ button {
   min-width: 0;
 }
 
+.todo-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(33, 54, 94, 0.18);
+  background: rgba(234, 240, 255, 0.78);
+  color: #2e3f6f;
+  padding: 2px 8px;
+  font-size: 0.73rem;
+}
+
+.tag-date {
+  background: rgba(250, 239, 226, 0.86);
+  border-color: rgba(197, 128, 89, 0.25);
+  color: #7a4a2a;
+}
+
+.tag-child {
+  background: rgba(226, 245, 242, 0.82);
+  border-color: rgba(10, 127, 116, 0.25);
+  color: #0c6e64;
+}
+
 .todo-title {
-  margin: 0;
+  margin: 6px 0 0;
   font-size: 1rem;
   word-break: break-word;
 }
@@ -339,6 +455,14 @@ button {
   }
 
   .composer-form {
+    gap: 10px;
+  }
+
+  .composer-main {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-extra {
     grid-template-columns: 1fr;
   }
 
@@ -353,5 +477,9 @@ button {
   .board-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .toolbar-controls {
+    width: 100%;
   }
 }

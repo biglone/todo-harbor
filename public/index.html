@@ -28,16 +28,47 @@
 
       <section class="panel composer-panel" aria-label="创建待办">
         <form id="todoForm" class="composer-form">
-          <label class="sr-only" for="todoInput">输入待办事项</label>
-          <input
-            id="todoInput"
-            name="title"
-            maxlength="200"
-            placeholder="比如：整理本周项目周报"
-            autocomplete="off"
-            required
-          />
-          <button type="submit" id="addButton">新增待办</button>
+          <div class="composer-main">
+            <label class="sr-only" for="todoInput">输入待办事项</label>
+            <input
+              id="todoInput"
+              name="title"
+              type="text"
+              maxlength="200"
+              placeholder="比如：整理本周项目周报"
+              autocomplete="off"
+              required
+            />
+            <button type="submit" id="addButton">新增待办</button>
+          </div>
+
+          <div class="composer-extra">
+            <label class="field" for="projectInput">
+              <span>项目</span>
+              <input
+                id="projectInput"
+                name="project"
+                type="text"
+                maxlength="80"
+                list="projectSuggestions"
+                value="默认项目"
+                placeholder="如：订单中心"
+              />
+            </label>
+
+            <label class="field" for="dueDateInput">
+              <span>任务日期</span>
+              <input id="dueDateInput" name="dueDate" type="date" />
+            </label>
+
+            <label class="field" for="parentSelect">
+              <span>父任务</span>
+              <select id="parentSelect" name="parentId">
+                <option value="">顶级任务（无父级）</option>
+              </select>
+            </label>
+          </div>
+          <datalist id="projectSuggestions"></datalist>
         </form>
       </section>
 
@@ -58,33 +89,47 @@
 
       <section class="panel board-panel">
         <div class="board-toolbar">
-          <div class="filters" role="tablist" aria-label="筛选代办">
-            <button class="filter is-active" data-filter="all" role="tab" aria-selected="true">
-              全部
-            </button>
-            <button class="filter" data-filter="active" role="tab" aria-selected="false">
-              进行中
-            </button>
-            <button class="filter" data-filter="completed" role="tab" aria-selected="false">
-              已完成
-            </button>
+          <div class="toolbar-controls">
+            <div class="filters" role="tablist" aria-label="筛选代办">
+              <button class="filter is-active" data-filter="all" role="tab" aria-selected="true">
+                全部
+              </button>
+              <button class="filter" data-filter="active" role="tab" aria-selected="false">
+                进行中
+              </button>
+              <button class="filter" data-filter="completed" role="tab" aria-selected="false">
+                已完成
+              </button>
+            </div>
+            <div class="view-modes" role="tablist" aria-label="视图模式">
+              <button class="view-mode is-active" data-view="flat" role="tab" aria-selected="true">
+                普通
+              </button>
+              <button class="view-mode" data-view="project" role="tab" aria-selected="false">
+                按项目
+              </button>
+              <button class="view-mode" data-view="date" role="tab" aria-selected="false">
+                按日期
+              </button>
+            </div>
           </div>
-          <p class="hint">点击左侧圆点可切换完成状态</p>
+          <p class="hint">可设置父任务做层级，或切换视图按项目/日期查看。</p>
         </div>
 
         <div id="messageBar" class="message" aria-live="polite"></div>
-        <ul id="todoList" class="todo-list" aria-label="代办事项列表"></ul>
+        <div id="todoList" class="todo-list" aria-label="代办事项列表"></div>
       </section>
     </main>
 
     <template id="todoTemplate">
-      <li class="todo-item">
+      <article class="todo-item">
         <button class="toggle" type="button" aria-label="切换完成状态"></button>
         <div class="todo-content">
+          <div class="todo-tags"></div>
           <p class="todo-title"></p>
           <p class="todo-meta"></p>
         </div>
-      </li>
+      </article>
     </template>
 
     <script src="/app.js"></script>
