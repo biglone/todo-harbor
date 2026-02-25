@@ -53,6 +53,14 @@ const createTablesSQL = `
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS registration_codes (
+    email TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL,
+    code_expires TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -129,8 +137,8 @@ db.exec(`
 `);
 
 const createUserQuery = db.prepare(`
-  INSERT INTO users (email, password_hash)
-  VALUES (@email, @password_hash)
+  INSERT INTO users (email, password_hash, email_verified)
+  VALUES (@email, @password_hash, @email_verified)
 `);
 
 const getUserByEmailQuery = db.prepare(`
@@ -185,6 +193,26 @@ const setResetTokenQuery = db.prepare(`
   SET reset_token_hash = @hash,
       reset_token_expires = @expires
   WHERE id = @id
+`);
+
+const upsertRegistrationCodeQuery = db.prepare(`
+  INSERT INTO registration_codes (email, code_hash, code_expires, updated_at)
+  VALUES (@email, @hash, @expires, CURRENT_TIMESTAMP)
+  ON CONFLICT(email) DO UPDATE SET
+    code_hash = excluded.code_hash,
+    code_expires = excluded.code_expires,
+    updated_at = CURRENT_TIMESTAMP
+`);
+
+const getRegistrationCodeByEmailQuery = db.prepare(`
+  SELECT email, code_hash, code_expires, created_at, updated_at
+  FROM registration_codes
+  WHERE email = @email
+`);
+
+const clearRegistrationCodeByEmailQuery = db.prepare(`
+  DELETE FROM registration_codes
+  WHERE email = @email
 `);
 
 const clearResetTokenQuery = db.prepare(`
@@ -941,8 +969,12 @@ function listProjects(userId) {
   }));
 }
 
-function createUser({ email, passwordHash }) {
-  const result = createUserQuery.run({ email, password_hash: passwordHash });
+function createUser({ email, passwordHash, emailVerified = false }) {
+  const result = createUserQuery.run({
+    email,
+    password_hash: passwordHash,
+    email_verified: emailVerified ? 1 : 0,
+  });
   return getUserById(result.lastInsertRowid);
 }
 
@@ -996,6 +1028,22 @@ function setResetToken(userId, tokenHash, expiresAt) {
   });
 }
 
+function setRegistrationCode(email, codeHash, expiresAt) {
+  upsertRegistrationCodeQuery.run({
+    email: String(email || ""),
+    hash: String(codeHash || ""),
+    expires: expiresAt,
+  });
+}
+
+function getRegistrationCodeByEmail(email) {
+  return getRegistrationCodeByEmailQuery.get({ email: String(email || "") }) || null;
+}
+
+function clearRegistrationCodeByEmail(email) {
+  clearRegistrationCodeByEmailQuery.run({ email: String(email || "") });
+}
+
 function clearResetToken(userId) {
   const userIdValue = requireUserId(userId);
   clearResetTokenQuery.run({ id: userIdValue });
@@ -1041,6 +1089,9 @@ module.exports = {
   setVerificationToken,
   markEmailVerified,
   setResetToken,
+  setRegistrationCode,
+  getRegistrationCodeByEmail,
+  clearRegistrationCodeByEmail,
   clearResetToken,
   updateUserEmail,
   updateUserPassword,

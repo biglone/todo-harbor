@@ -39,12 +39,32 @@ function createTestRequest() {
   return supertest.agent(app);
 }
 
-async function registerAndLogin(request) {
-  const email = `user-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
-  const password = "password123";
-  const res = await request.post("/api/auth/register").send({ email, password });
-  assert.equal(res.status, 201);
-  return { ...res.body, password };
+async function registerUser(request, overrides = {}) {
+  const email = overrides.email || `user-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+  const password = overrides.password || "password123";
+
+  const codeRes = await request.post("/api/auth/register/code/request").send({ email });
+  assert.equal(codeRes.status, 200);
+  assert.ok(codeRes.body.registerCode);
+
+  const registerRes = await request.post("/api/auth/register").send({
+    email,
+    password,
+    code: codeRes.body.registerCode,
+  });
+  assert.equal(registerRes.status, 201);
+
+  return { ...registerRes.body, email, password };
+}
+
+async function registerAndLogin(request, overrides = {}) {
+  const created = await registerUser(request, overrides);
+  const loginRes = await request.post("/api/auth/login").send({
+    email: created.email,
+    password: created.password,
+  });
+  assert.equal(loginRes.status, 200);
+  return { ...loginRes.body, email: created.email, password: created.password };
 }
 
 async function createTodo(request, payload) {
@@ -243,14 +263,36 @@ describe("Todos API", () => {
     assert.equal(afterUndo.items.length, 3);
   });
 
-  test("email verification flow", async () => {
+  test("registration requires email code and login is separate", async () => {
     const request = createTestRequest();
-    const user = await registerAndLogin(request);
-    assert.equal(user.emailVerified, false);
-    assert.ok(user.verifyToken);
+    const email = `verify-${Date.now()}@example.com`;
+    const password = "password123";
 
-    const verifyRes = await request.post("/api/auth/verify").send({ token: user.verifyToken });
-    assert.equal(verifyRes.status, 200);
+    const codeRes = await request.post("/api/auth/register/code/request").send({ email });
+    assert.equal(codeRes.status, 200);
+    assert.ok(codeRes.body.registerCode);
+
+    const badRegister = await request.post("/api/auth/register").send({
+      email,
+      password,
+      code: "000000",
+    });
+    assert.equal(badRegister.status, 400);
+
+    const registerRes = await request.post("/api/auth/register").send({
+      email,
+      password,
+      code: codeRes.body.registerCode,
+    });
+    assert.equal(registerRes.status, 201);
+    assert.equal(registerRes.body.emailVerified, true);
+
+    const meBeforeLogin = await request.get("/api/auth/me");
+    assert.equal(meBeforeLogin.status, 401);
+
+    const login = await request.post("/api/auth/login").send({ email, password });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.emailVerified, true);
 
     const me = await request.get("/api/auth/me");
     assert.equal(me.status, 200);

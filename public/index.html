@@ -57,6 +57,13 @@
             <span>确认密码</span>
             <input id="authPasswordConfirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
           </label>
+          <div id="authRegisterActions" class="auth-actions is-hidden">
+            <button type="button" id="requestRegisterCodeButton" class="secondary-button">发送注册验证码</button>
+          </div>
+          <label class="field is-hidden" id="authRegisterCodeField" for="authRegisterCode">
+            <span>邮箱验证码</span>
+            <input id="authRegisterCode" type="text" inputmode="numeric" placeholder="输入 6 位验证码" />
+          </label>
           <p id="authMessage" class="auth-message"></p>
           <div class="auth-actions">
             <button type="submit" id="authSubmitButton">登录</button>

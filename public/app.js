@@ -74,6 +74,10 @@ const authEmailEl = document.getElementById("authEmail");
 const authPasswordEl = document.getElementById("authPassword");
 const authPasswordConfirmFieldEl = document.getElementById("authPasswordConfirmField");
 const authPasswordConfirmEl = document.getElementById("authPasswordConfirm");
+const authRegisterActionsEl = document.getElementById("authRegisterActions");
+const requestRegisterCodeButtonEl = document.getElementById("requestRegisterCodeButton");
+const authRegisterCodeFieldEl = document.getElementById("authRegisterCodeField");
+const authRegisterCodeEl = document.getElementById("authRegisterCode");
 const authMessageEl = document.getElementById("authMessage");
 const authSubmitButtonEl = document.getElementById("authSubmitButton");
 const authModeButtons = document.querySelectorAll(".auth-mode");
@@ -136,6 +140,26 @@ const MODAL_TYPES = {
 };
 
 let activeModalType = null;
+const EMAIL_NOT_VERIFIED_ERROR = "Email not verified";
+
+function requiresEmailVerification(user) {
+  return Boolean(user?.requireEmailVerification);
+}
+
+function isEmailVerificationBlockedError(error) {
+  const message = String(error?.message || "").trim();
+  return (
+    message === EMAIL_NOT_VERIFIED_ERROR ||
+    message.includes(EMAIL_NOT_VERIFIED_ERROR) ||
+    message.includes("邮箱未验证")
+  );
+}
+
+function setEmailVerificationRequiredHint() {
+  setSyncStatus("邮箱未验证", true);
+  setMessage("登录成功，但邮箱未验证。请先在账号设置中完成邮箱验证。", true);
+  setAccountMessage("邮箱未验证，请点击“发送验证邮件”并完成验证。", true);
+}
 
 function setBusy(nextBusy) {
   state.busy = nextBusy;
@@ -221,6 +245,12 @@ function setAuthBusy(isBusy) {
   }
   if (authPasswordConfirmEl) {
     authPasswordConfirmEl.disabled = isBusy;
+  }
+  if (authRegisterCodeEl) {
+    authRegisterCodeEl.disabled = isBusy;
+  }
+  if (requestRegisterCodeButtonEl) {
+    requestRegisterCodeButtonEl.disabled = isBusy;
   }
   for (const button of authModeButtons) {
     button.disabled = isBusy;
@@ -466,16 +496,32 @@ function renderAuthModeButtons() {
 
 function setAuthMode(mode) {
   state.authMode = mode === "register" ? "register" : "login";
+  const isRegister = state.authMode === "register";
   renderAuthModeButtons();
 
   if (authPasswordConfirmFieldEl) {
-    authPasswordConfirmFieldEl.classList.toggle("is-hidden", state.authMode !== "register");
+    authPasswordConfirmFieldEl.classList.toggle("is-hidden", !isRegister);
+  }
+  if (authRegisterActionsEl) {
+    authRegisterActionsEl.classList.toggle("is-hidden", !isRegister);
+  }
+  if (authRegisterCodeFieldEl) {
+    authRegisterCodeFieldEl.classList.toggle("is-hidden", !isRegister);
   }
   if (authSubmitButtonEl) {
-    authSubmitButtonEl.textContent = state.authMode === "register" ? "注册" : "登录";
+    authSubmitButtonEl.textContent = isRegister ? "完成注册" : "登录";
   }
   if (authPasswordEl) {
-    authPasswordEl.autocomplete = state.authMode === "register" ? "new-password" : "current-password";
+    authPasswordEl.autocomplete = isRegister ? "new-password" : "current-password";
+  }
+  if (resetToggleButtonEl) {
+    resetToggleButtonEl.hidden = isRegister;
+  }
+  if (resetPanelEl && isRegister) {
+    resetPanelEl.classList.add("is-hidden");
+  }
+  if (!isRegister && authRegisterCodeEl) {
+    authRegisterCodeEl.value = "";
   }
   setAuthMessage("");
 }
@@ -1137,6 +1183,10 @@ async function loadTodos({ silent = false, append = false } = {}) {
       setMessage(`已加载 ${state.items.length} 条记录（总匹配 ${total}）`);
     }
   } catch (error) {
+    if (isEmailVerificationBlockedError(error)) {
+      setEmailVerificationRequiredHint();
+      return;
+    }
     setSyncStatus("连接异常", true);
     setMessage(error.message || "数据加载失败", true);
   } finally {
@@ -1149,6 +1199,10 @@ async function bootstrapAuth() {
   try {
     const me = await requestJSON("/api/auth/me");
     setAccessEnabled(true, me);
+    if (requiresEmailVerification(me) && !me.emailVerified) {
+      setEmailVerificationRequiredHint();
+      return;
+    }
     setSyncStatus("已连接");
     await loadTodos({ silent: true });
   } catch (error) {
@@ -1190,6 +1244,12 @@ async function applyAuthTokensFromURL() {
         setAccountMessage("邮箱验证成功");
         const me = await requestJSON("/api/auth/me");
         setAccessEnabled(true, me);
+        if (requiresEmailVerification(me) && !me.emailVerified) {
+          setEmailVerificationRequiredHint();
+        } else {
+          setSyncStatus("已连接");
+          await loadTodos({ silent: true });
+        }
       } else {
         setAuthMessage("邮箱验证成功，请登录");
       }
@@ -1499,6 +1559,33 @@ async function onUndoLastOperation() {
   }
 }
 
+async function onRequestRegisterCode() {
+  const email = authEmailEl.value.trim();
+  if (!email) {
+    setAuthMessage("请先输入邮箱");
+    return;
+  }
+
+  setAuthBusy(true);
+  try {
+    const result = await requestJSON("/api/auth/register/code/request", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+
+    if (result.registerCode && authRegisterCodeEl) {
+      authRegisterCodeEl.value = result.registerCode;
+      setAuthMessage(`验证码已发送，开发模式验证码：${result.registerCode}`);
+    } else {
+      setAuthMessage("验证码已发送，请检查邮箱");
+    }
+  } catch (error) {
+    setAuthMessage(error.message || "发送验证码失败");
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
 async function onAuthSubmit(event) {
   event.preventDefault();
   setAuthMessage("");
@@ -1506,6 +1593,8 @@ async function onAuthSubmit(event) {
   const email = authEmailEl.value.trim();
   const password = authPasswordEl.value;
   const confirmPassword = authPasswordConfirmEl ? authPasswordConfirmEl.value : "";
+  const registerCode = authRegisterCodeEl ? authRegisterCodeEl.value.trim() : "";
+  const isRegister = state.authMode === "register";
 
   if (!email) {
     setAuthMessage("请输入邮箱");
@@ -1517,7 +1606,7 @@ async function onAuthSubmit(event) {
     return;
   }
 
-  if (state.authMode === "register") {
+  if (isRegister) {
     if (password.length < 8) {
       setAuthMessage("密码至少 8 位");
       return;
@@ -1526,32 +1615,57 @@ async function onAuthSubmit(event) {
       setAuthMessage("两次输入的密码不一致");
       return;
     }
+    if (!registerCode) {
+      setAuthMessage("请输入邮箱验证码");
+      return;
+    }
   }
 
   setAuthBusy(true);
   try {
-    const endpoint = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
-    const user = await requestJSON(endpoint, {
+    if (isRegister) {
+      await requestJSON("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email, password, code: registerCode }),
+      });
+      if (authPasswordEl) {
+        authPasswordEl.value = "";
+      }
+      if (authPasswordConfirmEl) {
+        authPasswordConfirmEl.value = "";
+      }
+      if (authRegisterCodeEl) {
+        authRegisterCodeEl.value = "";
+      }
+      setAuthMode("login");
+      setAuthMessage("注册成功，请登录");
+      setMessage("注册成功，请使用邮箱和密码登录");
+      setSyncStatus("未登录", true);
+      return;
+    }
+
+    const user = await requestJSON("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
 
     setAccessEnabled(true, user);
-    setSyncStatus("已连接");
 
-    if (user.verifyToken) {
-      setAccountMessage(`已发送验证邮件，开发模式验证码：${user.verifyToken}`);
-      if (verifyTokenInputEl) {
-        verifyTokenInputEl.value = user.verifyToken;
-      }
-    } else if (!user.emailVerified) {
+    if (!user.emailVerified) {
       setAccountMessage("邮箱尚未验证，可在账号设置中发送验证邮件。");
     }
 
-    setMessage(state.authMode === "register" ? "注册成功，已登录" : "登录成功");
+    if (requiresEmailVerification(user) && !user.emailVerified) {
+      setEmailVerificationRequiredHint();
+      setMessage("登录成功，请先验证邮箱", true);
+      return;
+    }
+
+    setSyncStatus("已连接");
+    setMessage("登录成功");
     await loadTodos({ silent: true });
   } catch (error) {
-    setAuthMessage(error.message || "登录失败");
+    setAuthMessage(error.message || (isRegister ? "注册失败" : "登录失败"));
   } finally {
     setAuthBusy(false);
   }
@@ -1613,6 +1727,12 @@ async function onVerifyEmail() {
     setAccountMessage("邮箱验证成功");
     const me = await requestJSON("/api/auth/me");
     setAccessEnabled(true, me);
+    if (requiresEmailVerification(me) && !me.emailVerified) {
+      setEmailVerificationRequiredHint();
+      return;
+    }
+    setSyncStatus("已连接");
+    await loadTodos({ silent: true });
   } catch (error) {
     setAccountMessage(error.message || "验证失败", true);
   }
@@ -2145,6 +2265,15 @@ if (loadMoreButtonEl) {
 
 if (authFormEl) {
   authFormEl.addEventListener("submit", onAuthSubmit);
+}
+
+if (requestRegisterCodeButtonEl) {
+  requestRegisterCodeButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onRequestRegisterCode();
+  });
 }
 
 if (logoutButtonEl) {

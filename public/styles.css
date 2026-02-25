@@ -218,6 +218,10 @@ h1 {
   align-items: center;
 }
 
+.auth-actions.is-hidden {
+  display: none;
+}
+
 #authSubmitButton {
   background: linear-gradient(130deg, var(--accent), #0a6476);
   color: #fff;

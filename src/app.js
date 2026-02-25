@@ -32,6 +32,9 @@ const {
   setVerificationToken,
   markEmailVerified,
   setResetToken,
+  setRegistrationCode,
+  getRegistrationCodeByEmail,
+  clearRegistrationCodeByEmail,
   clearResetToken,
   updateUserEmail,
   updateUserPassword,
@@ -43,6 +46,7 @@ const VALID_SORTS = new Set(["created_desc", "created_asc", "due_asc", "due_desc
 const VALID_DUE_SCOPES = new Set(["all", "overdue", "today", "week", "no_due"]);
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
+const REGISTER_CODE_TTL_MINUTES = Number(process.env.REGISTER_CODE_TTL_MINUTES || 10);
 const VERIFY_TOKEN_TTL_MINUTES = Number(process.env.VERIFY_TOKEN_TTL_MINUTES || 60 * 24);
 const RESET_TOKEN_TTL_MINUTES = Number(process.env.RESET_TOKEN_TTL_MINUTES || 30);
 const REQUIRE_EMAIL_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === "1";
@@ -60,6 +64,8 @@ const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${process.env
 let mailTransporter = null;
 
 const app = express();
+// Cloudflare Tunnel/reverse proxy forwards X-Forwarded-Proto for secure cookies.
+app.set("trust proxy", 1);
 
 app.use(express.json({ limit: "6mb" }));
 
@@ -114,6 +120,10 @@ function isValidEmail(value) {
 
 function generateToken() {
   return crypto.randomBytes(32).toString("hex");
+}
+
+function generateRegisterCode() {
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 function hashToken(token) {
@@ -190,12 +200,27 @@ function buildVerifyEmail(email, token) {
   return { to: email, subject, text, html };
 }
 
+function buildRegisterCodeEmail(email, code) {
+  const subject = "Todo Harbor 注册验证码";
+  const text = `你好，\n\n你的注册验证码是：${code}\n\n请输入该验证码完成注册。\n\n如果不是你本人操作，请忽略此邮件。`;
+  const html = `\n    <p>你好，</p>\n    <p>你的注册验证码是：<strong>${code}</strong></p>\n    <p>请输入该验证码完成注册。</p>\n    <p>如果不是你本人操作，请忽略此邮件。</p>\n  `;
+  return { to: email, subject, text, html };
+}
+
 function buildResetEmail(email, token) {
   const resetUrl = `${APP_BASE_URL}/?reset_token=${encodeURIComponent(token)}`;
   const subject = "Todo Harbor 密码重置";
   const text = `你好，\\n\\n你的密码重置码是：${token}\\n\\n也可以点击链接打开页面：${resetUrl}\\n\\n如果不是你本人操作，请忽略此邮件。`;
   const html = `\n    <p>你好，</p>\n    <p>你的密码重置码是：<strong>${token}</strong></p>\n    <p>也可以点击链接打开页面：<a href=\"${resetUrl}\">${resetUrl}</a></p>\n    <p>如果不是你本人操作，请忽略此邮件。</p>\n  `;
   return { to: email, subject, text, html };
+}
+
+function issueRegistrationCode(email) {
+  const code = generateRegisterCode();
+  const codeHash = hashToken(code);
+  const expiresAt = addMinutes(REGISTER_CODE_TTL_MINUTES);
+  setRegistrationCode(email, codeHash, expiresAt);
+  return { code, expiresAt };
 }
 
 function issueVerificationToken(userId) {
@@ -242,12 +267,45 @@ function requireVerified(req, res, next) {
   return next();
 }
 
+app.post("/api/auth/register/code/request", async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ error: "email is invalid" });
+  }
+
+  const existing = getUserByEmail(email);
+  if (existing) {
+    return res.status(409).json({ error: "email already registered" });
+  }
+
+  const registration = issueRegistrationCode(email);
+  if (INCLUDE_TOKENS_IN_RESPONSE) {
+    console.log(`Register code for ${email}: ${registration.code}`);
+  }
+
+  const mailResult = await sendEmail(buildRegisterCodeEmail(email, registration.code));
+  if (!mailResult.sent && !INCLUDE_TOKENS_IN_RESPONSE) {
+    return res.status(503).json({ error: "verification email unavailable" });
+  }
+
+  return res.json({
+    ok: true,
+    codeExpiresAt: registration.expiresAt,
+    registerCode: INCLUDE_TOKENS_IN_RESPONSE ? registration.code : undefined,
+  });
+});
+
 app.post("/api/auth/register", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
+  const code = String(req.body?.code || "").trim();
 
   if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: "email is invalid" });
+  }
+
+  if (!code) {
+    return res.status(400).json({ error: "code is required" });
   }
 
   if (password.length < 8 || password.length > 72) {
@@ -259,30 +317,37 @@ app.post("/api/auth/register", async (req, res) => {
     return res.status(409).json({ error: "email already registered" });
   }
 
+  const registration = getRegistrationCodeByEmail(email);
+  if (!registration) {
+    return res.status(400).json({ error: "invalid code" });
+  }
+
+  if (isTokenExpired(registration.code_expires)) {
+    clearRegistrationCodeByEmail(email);
+    return res.status(400).json({ error: "code expired" });
+  }
+
+  const codeHash = hashToken(code);
+  if (codeHash !== registration.code_hash) {
+    return res.status(400).json({ error: "invalid code" });
+  }
+
+  clearRegistrationCodeByEmail(email);
+
   const isFirstUser = countUsers() === 0;
   const passwordHash = bcrypt.hashSync(password, 10);
-  const user = createUser({ email, passwordHash });
+  const user = createUser({ email, passwordHash, emailVerified: true });
 
   if (isFirstUser) {
     claimUnownedTodos(user.id);
   }
 
-  const verification = issueVerificationToken(user.id);
-  if (INCLUDE_TOKENS_IN_RESPONSE) {
-    console.log(`Verify token for ${user.email}: ${verification.token}`);
-  }
-  await sendEmail(buildVerifyEmail(user.email, verification.token));
-
-  req.session.userId = user.id;
-  req.session.email = user.email;
-
   return res.status(201).json({
     id: user.id,
     email: user.email,
-    emailVerified: Boolean(user.email_verified),
+    emailVerified: true,
+    requireEmailVerification: REQUIRE_EMAIL_VERIFICATION,
     created_at: user.created_at,
-    verifyToken: INCLUDE_TOKENS_IN_RESPONSE ? verification.token : undefined,
-    verifyExpiresAt: INCLUDE_TOKENS_IN_RESPONSE ? verification.expiresAt : undefined,
   });
 });
 
@@ -310,6 +375,7 @@ app.post("/api/auth/login", (req, res) => {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.email_verified),
+    requireEmailVerification: REQUIRE_EMAIL_VERIFICATION,
     created_at: user.created_at,
   });
 });
@@ -324,6 +390,7 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
     id: req.user.id,
     email: req.user.email,
     emailVerified: Boolean(req.user.email_verified),
+    requireEmailVerification: REQUIRE_EMAIL_VERIFICATION,
     created_at: req.user.created_at,
   });
 });
@@ -424,6 +491,7 @@ app.get("/api/account", requireAuth, (req, res) => {
     id: req.user.id,
     email: req.user.email,
     emailVerified: Boolean(req.user.email_verified),
+    requireEmailVerification: REQUIRE_EMAIL_VERIFICATION,
     created_at: req.user.created_at,
   });
 });
