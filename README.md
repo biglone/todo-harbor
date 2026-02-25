@@ -6,6 +6,7 @@
 ## 功能
 
 - 新增待办事项（支持填写项目、任务日期、父任务）
+- 新增区支持 `单条录入 / 批量录入` 两种模式
 - 切换完成/未完成状态
 - 按 `全部 / 进行中 / 已完成` 过滤
 - 层级任务（父任务/子任务）展示
@@ -80,4 +81,9 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `project?: string`（可选，默认 `默认项目`）
   - `dueDate?: YYYY-MM-DD`（可选）
   - `parentId?: number`（可选，表示创建子任务）
+- `POST /api/todos/bulk`（批量创建）
+  - `titles: string[]`（必填，每个元素是一条任务标题）
+  - `project?: string`
+  - `dueDate?: YYYY-MM-DD`
+  - `parentId?: number`
 - `PATCH /api/todos/:id/toggle`
