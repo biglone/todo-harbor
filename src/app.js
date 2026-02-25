@@ -9,6 +9,7 @@ const {
   toggleTodo,
   deleteTodoTree,
   clearCompletedTodos,
+  updateTodosBatch,
   getStats,
   listParentCandidates,
   listProjects,
@@ -270,6 +271,77 @@ app.post("/api/todos/bulk", (req, res) => {
     count: created.length,
     items: created,
   });
+});
+
+app.post("/api/todos/batch", (req, res) => {
+  const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!rawIds.length) {
+    return res.status(400).json({
+      error: "ids is required and must be a non-empty array",
+    });
+  }
+
+  if (rawIds.length > 500) {
+    return res.status(400).json({
+      error: "ids cannot exceed 500 items per request",
+    });
+  }
+
+  const ids = [...new Set(rawIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) {
+    return res.status(400).json({
+      error: "No valid ids provided",
+    });
+  }
+
+  const payload = { ids };
+  let hasOperation = false;
+
+  if (req.body?.completed !== undefined) {
+    if (typeof req.body.completed !== "boolean") {
+      return res.status(400).json({
+        error: "completed must be boolean",
+      });
+    }
+    payload.completed = req.body.completed;
+    hasOperation = true;
+  }
+
+  if (req.body?.project !== undefined) {
+    const project = String(req.body.project || "").trim();
+    if (!project) {
+      return res.status(400).json({
+        error: "project cannot be empty",
+      });
+    }
+    if (project.length > 80) {
+      return res.status(400).json({
+        error: "project cannot exceed 80 characters",
+      });
+    }
+    payload.project = project;
+    hasOperation = true;
+  }
+
+  if (req.body?.dueDate !== undefined) {
+    const dueDateRaw = req.body.dueDate === null ? "" : String(req.body.dueDate || "").trim();
+    if (dueDateRaw && !isValidDateString(dueDateRaw)) {
+      return res.status(400).json({
+        error: "dueDate must be a valid date in YYYY-MM-DD format",
+      });
+    }
+    payload.dueDate = dueDateRaw || null;
+    hasOperation = true;
+  }
+
+  if (!hasOperation) {
+    return res.status(400).json({
+      error: "At least one operation is required: completed, project, or dueDate",
+    });
+  }
+
+  const result = updateTodosBatch(payload);
+  return res.json(result);
 });
 
 app.delete("/api/todos/completed", (_req, res) => {

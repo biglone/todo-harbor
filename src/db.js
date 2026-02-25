@@ -98,6 +98,14 @@ const updateTodoStatusQuery = db.prepare(`
   WHERE id = @id
 `);
 
+const updateTodoProjectDueQuery = db.prepare(`
+  UPDATE todos
+  SET
+    project = @project,
+    due_date = @due_date
+  WHERE id = @id
+`);
+
 const listTodoTreeIdsQuery = db.prepare(`
   WITH RECURSIVE tree(id) AS (
     SELECT id FROM todos WHERE id = @id
@@ -331,6 +339,62 @@ function clearCompletedTodos() {
   return clearCompleted();
 }
 
+function updateTodosBatch({ ids, project, dueDate, completed }) {
+  const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
+  if (!uniqueIds.length) {
+    return {
+      count: 0,
+      ids: [],
+    };
+  }
+
+  const applyBatch = db.transaction((targetIds) => {
+    const updatedIds = new Set();
+    const completedAt = completed === true ? new Date().toISOString() : null;
+
+    for (const id of targetIds) {
+      const current = getTodo(id);
+      if (!current) {
+        continue;
+      }
+
+      if (project !== undefined || dueDate !== undefined) {
+        const nextProject = project !== undefined ? project : current.project;
+        const nextDueDate = dueDate !== undefined ? dueDate : current.due_date;
+        const updateResult = updateTodoProjectDueQuery.run({
+          id,
+          project: nextProject,
+          due_date: nextDueDate || null,
+        });
+
+        if (updateResult.changes > 0) {
+          updatedIds.add(id);
+        }
+      }
+
+      if (completed !== undefined) {
+        const updateResult = updateTodoStatusQuery.run({
+          id,
+          completed: Number(completed),
+          completed_at: completedAt,
+        });
+
+        if (updateResult.changes > 0) {
+          updatedIds.add(id);
+        }
+      }
+    }
+
+    return [...updatedIds];
+  });
+
+  const updatedIds = applyBatch(uniqueIds);
+  return {
+    count: updatedIds.length,
+    ids: updatedIds,
+  };
+}
+
 function getStats() {
   const row = countTodosQuery.get();
   return {
@@ -361,6 +425,7 @@ module.exports = {
   toggleTodo,
   deleteTodoTree,
   clearCompletedTodos,
+  updateTodosBatch,
   getStats,
   listParentCandidates,
   listProjects,

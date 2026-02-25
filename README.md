@@ -86,6 +86,11 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `project?: string`
   - `dueDate?: YYYY-MM-DD`
   - `parentId?: number`
+- `POST /api/todos/batch`（批量更新当前任务集合）
+  - `ids: number[]`（必填）
+  - `completed?: boolean`
+  - `project?: string`
+  - `dueDate?: YYYY-MM-DD | null`
 - `PATCH /api/todos/:id`（编辑任务标题/项目/日期/父任务）
 - `DELETE /api/todos/:id`（删除任务，含其子任务）
 - `DELETE /api/todos/completed`（清理全部已完成任务）

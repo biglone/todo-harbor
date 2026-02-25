@@ -41,6 +41,9 @@ const summaryHintEl = document.getElementById("summaryHint");
 const countAllEl = document.getElementById("countAll");
 const countActiveEl = document.getElementById("countActive");
 const countCompletedEl = document.getElementById("countCompleted");
+const bulkCompleteButtonEl = document.getElementById("bulkCompleteButton");
+const bulkProjectButtonEl = document.getElementById("bulkProjectButton");
+const bulkDueDateButtonEl = document.getElementById("bulkDueDateButton");
 const clearCompletedButtonEl = document.getElementById("clearCompletedButton");
 const searchInputEl = document.getElementById("searchInput");
 const projectFilterSelectEl = document.getElementById("projectFilterSelect");
@@ -58,6 +61,15 @@ function setBusy(nextBusy) {
   state.busy = nextBusy;
   addButtonEl.disabled = nextBusy;
   resetComposerButtonEl.disabled = nextBusy;
+  if (bulkCompleteButtonEl) {
+    bulkCompleteButtonEl.disabled = nextBusy;
+  }
+  if (bulkProjectButtonEl) {
+    bulkProjectButtonEl.disabled = nextBusy;
+  }
+  if (bulkDueDateButtonEl) {
+    bulkDueDateButtonEl.disabled = nextBusy;
+  }
   if (clearCompletedButtonEl) {
     const completedCount = Number(countCompletedEl.textContent || 0);
     clearCompletedButtonEl.disabled = nextBusy || completedCount <= 0;
@@ -141,6 +153,20 @@ function formatDateForInput(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isValidDateInput(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
 }
 
 function getBatchTitles() {
@@ -923,6 +949,87 @@ async function onClearCompleted() {
   }
 }
 
+function getVisibleTodoIds({ activeOnly = false } = {}) {
+  const source = activeOnly ? state.items.filter((item) => !item.completed) : state.items;
+  return source.map((item) => item.id);
+}
+
+async function applyBatchUpdate(payload, pendingMessage, doneMessagePrefix) {
+  setBusy(true);
+  setMessage(pendingMessage);
+
+  try {
+    const result = await requestJSON("/api/todos/batch", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await loadTodos({ silent: true });
+    setMessage(`${doneMessagePrefix}${result.count || 0} 条`);
+  } catch (error) {
+    setMessage(error.message || "批量操作失败", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function onBulkCompleteFiltered() {
+  const ids = getVisibleTodoIds({ activeOnly: true });
+  if (!ids.length) {
+    setMessage("当前筛选结果中没有可完成任务");
+    return;
+  }
+
+  const confirmed = window.confirm(`确认将当前筛选结果中的 ${ids.length} 条任务标记为已完成吗？`);
+  if (!confirmed) {
+    return;
+  }
+
+  applyBatchUpdate({ ids, completed: true }, "正在批量标记完成...", "已批量完成 ");
+}
+
+function onBulkProjectFiltered() {
+  const ids = getVisibleTodoIds();
+  if (!ids.length) {
+    setMessage("当前筛选结果为空，无法批量修改");
+    return;
+  }
+
+  const input = window.prompt("请输入新的项目名（应用到当前筛选结果）", state.filterProject || "");
+  if (input === null) {
+    return;
+  }
+
+  const project = input.trim();
+  if (!project) {
+    setMessage("项目名不能为空", true);
+    return;
+  }
+
+  applyBatchUpdate({ ids, project }, "正在批量更新项目...", "已批量更新项目，共 ");
+}
+
+function onBulkDueDateFiltered() {
+  const ids = getVisibleTodoIds();
+  if (!ids.length) {
+    setMessage("当前筛选结果为空，无法批量修改");
+    return;
+  }
+
+  const input = window.prompt("请输入日期（YYYY-MM-DD），留空可清除日期", state.dueFrom || "");
+  if (input === null) {
+    return;
+  }
+
+  const dueDateRaw = input.trim();
+  if (dueDateRaw && !isValidDateInput(dueDateRaw)) {
+    setMessage("日期格式无效，请使用 YYYY-MM-DD", true);
+    return;
+  }
+
+  const dueDate = dueDateRaw || null;
+  applyBatchUpdate({ ids, dueDate }, "正在批量更新日期...", "已批量更新日期，共 ");
+}
+
 function resetQueryFilters() {
   if (searchInputEl) {
     searchInputEl.value = "";
@@ -1081,6 +1188,33 @@ if (clearCompletedButtonEl) {
       return;
     }
     onClearCompleted();
+  });
+}
+
+if (bulkCompleteButtonEl) {
+  bulkCompleteButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onBulkCompleteFiltered();
+  });
+}
+
+if (bulkProjectButtonEl) {
+  bulkProjectButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onBulkProjectFiltered();
+  });
+}
+
+if (bulkDueDateButtonEl) {
+  bulkDueDateButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onBulkDueDateFiltered();
   });
 }
 
