@@ -14,14 +14,43 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+    project TEXT NOT NULL DEFAULT '默认项目',
+    due_date TEXT,
+    parent_id INTEGER,
     completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
   );
 `);
 
+const tableColumns = new Set(
+  db
+    .prepare(`PRAGMA table_info(todos)`)
+    .all()
+    .map((column) => column.name),
+);
+
+if (!tableColumns.has("project")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN project TEXT NOT NULL DEFAULT '默认项目';`);
+}
+
+if (!tableColumns.has("due_date")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN due_date TEXT;`);
+}
+
+if (!tableColumns.has("parent_id")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN parent_id INTEGER;`);
+}
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos (completed);
+  CREATE INDEX IF NOT EXISTS idx_todos_project ON todos (project);
+  CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos (due_date);
+  CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
+`);
+
 const listTodosQuery = db.prepare(`
-  SELECT id, title, completed, created_at, completed_at
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
   WHERE
     @filter = 'all'
@@ -31,12 +60,12 @@ const listTodosQuery = db.prepare(`
 `);
 
 const createTodoQuery = db.prepare(`
-  INSERT INTO todos (title)
-  VALUES (@title)
+  INSERT INTO todos (title, project, due_date, parent_id)
+  VALUES (@title, @project, @due_date, @parent_id)
 `);
 
 const getTodoByIdQuery = db.prepare(`
-  SELECT id, title, completed, created_at, completed_at
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
   WHERE id = @id
 `);
@@ -57,6 +86,20 @@ const countTodosQuery = db.prepare(`
   FROM todos
 `);
 
+const listParentCandidatesQuery = db.prepare(`
+  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  FROM todos
+  WHERE completed = 0
+  ORDER BY id DESC
+`);
+
+const listProjectsQuery = db.prepare(`
+  SELECT project, COUNT(*) AS count
+  FROM todos
+  GROUP BY project
+  ORDER BY LOWER(project) ASC
+`);
+
 function mapTodo(row) {
   return {
     ...row,
@@ -68,9 +111,18 @@ function listTodos(filter = "all") {
   return listTodosQuery.all({ filter }).map(mapTodo);
 }
 
-function createTodo(rawTitle) {
+function createTodo({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
   const title = String(rawTitle || "").trim();
-  const result = createTodoQuery.run({ title });
+  const project = String(rawProject || "").trim() || "默认项目";
+  const dueDate = rawDueDate ? String(rawDueDate).trim() : null;
+  const parentIdValue = Number.isInteger(parentId) && parentId > 0 ? parentId : null;
+
+  const result = createTodoQuery.run({
+    title,
+    project,
+    due_date: dueDate || null,
+    parent_id: parentIdValue,
+  });
   return getTodo(result.lastInsertRowid);
 }
 
@@ -104,6 +156,17 @@ function getStats() {
   };
 }
 
+function listParentCandidates() {
+  return listParentCandidatesQuery.all().map(mapTodo);
+}
+
+function listProjects() {
+  return listProjectsQuery.all().map((row) => ({
+    name: row.project,
+    count: Number(row.count || 0),
+  }));
+}
+
 module.exports = {
   dbFile,
   listTodos,
@@ -111,4 +174,6 @@ module.exports = {
   getTodo,
   toggleTodo,
   getStats,
+  listParentCandidates,
+  listProjects,
 };
