@@ -68,6 +68,29 @@ body {
   align-items: flex-start;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.user-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.user-bar.is-hidden {
+  display: none;
+}
+
+.user-bar span {
+  font-weight: 600;
+}
+
 .eyebrow {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
@@ -115,6 +138,82 @@ h1 {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   backdrop-filter: blur(6px);
+}
+
+.auth-panel {
+  padding: 16px;
+}
+
+.auth-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.auth-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #0f6f66;
+}
+
+.auth-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.auth-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.auth-modes {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auth-mode {
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  background: #ebf0ff;
+  color: #2a3c6b;
+}
+
+.auth-mode.is-active {
+  background: linear-gradient(140deg, #0f7f74, #0f5c9f);
+  color: #fff;
+}
+
+.auth-form {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-message {
+  margin: 0;
+  min-height: 18px;
+  font-size: 0.85rem;
+  color: var(--danger);
+}
+
+.auth-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+#authSubmitButton {
+  background: linear-gradient(130deg, var(--accent), #0a6476);
+  color: #fff;
+  padding: 11px 16px;
+  min-width: 120px;
 }
 
 .composer-panel {
@@ -884,9 +983,27 @@ button {
     gap: 8px;
   }
 
+  .topbar-actions {
+    align-items: flex-start;
+  }
+
   .composer-head {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .auth-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .auth-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #authSubmitButton {
+    width: 100%;
   }
 
   .compose-modes {

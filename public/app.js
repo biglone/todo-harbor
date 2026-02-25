@@ -12,12 +12,15 @@ const state = {
   page: 1,
   pageSize: 60,
   pagination: null,
+  accessEnabled: false,
+  authMode: "login",
   busy: false,
   items: [],
   visibleItems: [],
   projects: [],
   parents: [],
   undoAvailable: false,
+  user: null,
 };
 
 const todoListEl = document.getElementById("todoList");
@@ -65,6 +68,19 @@ const listActionsEl = document.getElementById("listActions");
 const listProgressEl = document.getElementById("listProgress");
 const loadMoreButtonEl = document.getElementById("loadMoreButton");
 
+const authPanelEl = document.getElementById("authPanel");
+const authFormEl = document.getElementById("authForm");
+const authEmailEl = document.getElementById("authEmail");
+const authPasswordEl = document.getElementById("authPassword");
+const authPasswordConfirmFieldEl = document.getElementById("authPasswordConfirmField");
+const authPasswordConfirmEl = document.getElementById("authPasswordConfirm");
+const authMessageEl = document.getElementById("authMessage");
+const authSubmitButtonEl = document.getElementById("authSubmitButton");
+const authModeButtons = document.querySelectorAll(".auth-mode");
+const userBarEl = document.getElementById("userBar");
+const userEmailEl = document.getElementById("userEmail");
+const logoutButtonEl = document.getElementById("logoutButton");
+
 const modalEl = document.getElementById("actionModal");
 const modalFormEl = document.getElementById("modalForm");
 const modalTitleEl = document.getElementById("modalTitle");
@@ -100,59 +116,79 @@ let activeModalType = null;
 
 function setBusy(nextBusy) {
   state.busy = nextBusy;
-  addButtonEl.disabled = nextBusy;
-  resetComposerButtonEl.disabled = nextBusy;
+  const locked = nextBusy || !state.accessEnabled;
+
+  addButtonEl.disabled = locked;
+  resetComposerButtonEl.disabled = locked;
   if (bulkCompleteButtonEl) {
-    bulkCompleteButtonEl.disabled = nextBusy;
+    bulkCompleteButtonEl.disabled = locked;
   }
   if (bulkProjectButtonEl) {
-    bulkProjectButtonEl.disabled = nextBusy;
+    bulkProjectButtonEl.disabled = locked;
   }
   if (bulkDueDateButtonEl) {
-    bulkDueDateButtonEl.disabled = nextBusy;
+    bulkDueDateButtonEl.disabled = locked;
   }
   if (exportButtonEl) {
-    exportButtonEl.disabled = nextBusy;
+    exportButtonEl.disabled = locked;
   }
   if (importButtonEl) {
-    importButtonEl.disabled = nextBusy;
+    importButtonEl.disabled = locked;
   }
   if (undoButtonEl) {
-    undoButtonEl.disabled = nextBusy || !state.undoAvailable;
+    undoButtonEl.disabled = locked || !state.undoAvailable;
   }
   if (clearCompletedButtonEl) {
     const completedCount = Number(countCompletedEl.textContent || 0);
-    clearCompletedButtonEl.disabled = nextBusy || completedCount <= 0;
+    clearCompletedButtonEl.disabled = locked || completedCount <= 0;
   }
   if (searchInputEl) {
-    searchInputEl.disabled = nextBusy;
+    searchInputEl.disabled = locked;
   }
   if (projectFilterSelectEl) {
-    projectFilterSelectEl.disabled = nextBusy;
+    projectFilterSelectEl.disabled = locked;
   }
   if (dueFromInputEl) {
-    dueFromInputEl.disabled = nextBusy;
+    dueFromInputEl.disabled = locked;
   }
   if (dueToInputEl) {
-    dueToInputEl.disabled = nextBusy;
+    dueToInputEl.disabled = locked;
   }
   if (sortSelectEl) {
-    sortSelectEl.disabled = nextBusy;
+    sortSelectEl.disabled = locked;
   }
   if (resetQueryButtonEl) {
-    resetQueryButtonEl.disabled = nextBusy;
+    resetQueryButtonEl.disabled = locked;
   }
   if (loadMoreButtonEl && !loadMoreButtonEl.hidden) {
-    loadMoreButtonEl.disabled = nextBusy;
+    loadMoreButtonEl.disabled = locked;
   }
   for (const button of composeModeButtons) {
-    button.disabled = nextBusy;
+    button.disabled = locked;
   }
   for (const button of dueScopeButtons) {
-    button.disabled = nextBusy;
+    button.disabled = locked;
   }
   for (const button of quickDateButtons) {
-    button.disabled = nextBusy;
+    button.disabled = locked;
+  }
+}
+
+function setAuthBusy(isBusy) {
+  if (authSubmitButtonEl) {
+    authSubmitButtonEl.disabled = isBusy;
+  }
+  if (authEmailEl) {
+    authEmailEl.disabled = isBusy;
+  }
+  if (authPasswordEl) {
+    authPasswordEl.disabled = isBusy;
+  }
+  if (authPasswordConfirmEl) {
+    authPasswordConfirmEl.disabled = isBusy;
+  }
+  for (const button of authModeButtons) {
+    button.disabled = isBusy;
   }
 }
 
@@ -161,9 +197,39 @@ function setMessage(text, isError = false) {
   messageBarEl.classList.toggle("is-error", Boolean(isError));
 }
 
+function setAuthMessage(text) {
+  authMessageEl.textContent = text || "";
+}
+
 function setSyncStatus(text, isError = false) {
   syncStatusEl.textContent = text;
   syncStatusEl.classList.toggle("is-error", Boolean(isError));
+}
+
+function setAccessEnabled(enabled, user = null) {
+  state.accessEnabled = enabled;
+  state.user = user;
+
+  if (authPanelEl) {
+    authPanelEl.classList.toggle("is-hidden", enabled);
+  }
+  if (userBarEl) {
+    userBarEl.classList.toggle("is-hidden", !enabled);
+  }
+  if (userEmailEl) {
+    userEmailEl.textContent = enabled && user ? user.email : "";
+  }
+
+  if (!enabled) {
+    resetListPagination();
+    todoListEl.innerHTML = "";
+    if (listActionsEl) {
+      listActionsEl.classList.add("is-hidden");
+    }
+    renderDueSnapshot({ overdue: 0, today: 0, upcoming: 0, noDue: 0 });
+  }
+
+  setBusy(state.busy);
 }
 
 function normalizeSqliteTime(value) {
@@ -312,6 +378,30 @@ function renderComposeModeButtons() {
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-selected", selected ? "true" : "false");
   }
+}
+
+function renderAuthModeButtons() {
+  for (const button of authModeButtons) {
+    const selected = button.dataset.authMode === state.authMode;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode === "register" ? "register" : "login";
+  renderAuthModeButtons();
+
+  if (authPasswordConfirmFieldEl) {
+    authPasswordConfirmFieldEl.classList.toggle("is-hidden", state.authMode !== "register");
+  }
+  if (authSubmitButtonEl) {
+    authSubmitButtonEl.textContent = state.authMode === "register" ? "注册" : "登录";
+  }
+  if (authPasswordEl) {
+    authPasswordEl.autocomplete = state.authMode === "register" ? "new-password" : "current-password";
+  }
+  setAuthMessage("");
 }
 
 function exitEditMode({ resetFields = false } = {}) {
@@ -549,7 +639,7 @@ function renderListActions(pagination, renderedCount) {
 
   const hasMore = Boolean(pagination.hasNext);
   loadMoreButtonEl.hidden = !hasMore;
-  loadMoreButtonEl.disabled = state.busy || !hasMore;
+  loadMoreButtonEl.disabled = !state.accessEnabled || state.busy || !hasMore;
 }
 
 function renderGroupedByProject(roots) {
@@ -671,7 +761,7 @@ function renderStats(stats) {
   countCompletedEl.textContent = String(completed);
 
   if (clearCompletedButtonEl) {
-    clearCompletedButtonEl.disabled = state.busy || completed <= 0;
+    clearCompletedButtonEl.disabled = !state.accessEnabled || state.busy || completed <= 0;
   }
 }
 
@@ -894,6 +984,11 @@ async function requestJSON(url, options = {}) {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) {
+      setAccessEnabled(false, null);
+      setSyncStatus("未登录", true);
+      throw new Error(payload.error || "请先登录");
+    }
     throw new Error(payload.error || `Request failed with status ${response.status}`);
   }
   return payload;
@@ -907,6 +1002,10 @@ function resetListPagination() {
 }
 
 async function loadTodos({ silent = false, append = false } = {}) {
+  if (!state.accessEnabled) {
+    return;
+  }
+
   syncQueryStateFromControls();
   if (state.dueFrom && state.dueTo && state.dueFrom > state.dueTo) {
     setMessage("筛选到期日范围无效：开始到期日不能晚于结束到期日", true);
@@ -966,6 +1065,22 @@ async function loadTodos({ silent = false, append = false } = {}) {
     setMessage(error.message || "数据加载失败", true);
   } finally {
     setBusy(false);
+  }
+}
+
+async function bootstrapAuth() {
+  setAuthBusy(true);
+  try {
+    const me = await requestJSON("/api/auth/me");
+    setAccessEnabled(true, me);
+    setSyncStatus("已连接");
+    await loadTodos({ silent: true });
+  } catch (error) {
+    setAccessEnabled(false, null);
+    setSyncStatus("未登录", true);
+    setMessage("请登录后使用", true);
+  } finally {
+    setAuthBusy(false);
   }
 }
 
@@ -1253,6 +1368,68 @@ async function onUndoLastOperation() {
   }
 }
 
+async function onAuthSubmit(event) {
+  event.preventDefault();
+  setAuthMessage("");
+
+  const email = authEmailEl.value.trim();
+  const password = authPasswordEl.value;
+  const confirmPassword = authPasswordConfirmEl ? authPasswordConfirmEl.value : "";
+
+  if (!email) {
+    setAuthMessage("请输入邮箱");
+    return;
+  }
+
+  if (!password) {
+    setAuthMessage("请输入密码");
+    return;
+  }
+
+  if (state.authMode === "register") {
+    if (password.length < 8) {
+      setAuthMessage("密码至少 8 位");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setAuthMessage("两次输入的密码不一致");
+      return;
+    }
+  }
+
+  setAuthBusy(true);
+  try {
+    const endpoint = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const user = await requestJSON(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+
+    setAccessEnabled(true, user);
+    setSyncStatus("已连接");
+    setMessage(state.authMode === "register" ? "注册成功，已登录" : "登录成功");
+    await loadTodos({ silent: true });
+  } catch (error) {
+    setAuthMessage(error.message || "登录失败");
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function onLogout() {
+  setBusy(true);
+  try {
+    await requestJSON("/api/auth/logout", { method: "POST" });
+    setAccessEnabled(false, null);
+    setSyncStatus("未登录", true);
+    setMessage("已退出登录");
+  } catch (error) {
+    setMessage(error.message || "退出失败", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function resetQueryFilters() {
   if (searchInputEl) {
     searchInputEl.value = "";
@@ -1441,9 +1618,18 @@ async function handleImportFileChange(event) {
   }
 }
 
+for (const button of authModeButtons) {
+  button.addEventListener("click", () => {
+    if (button.disabled) {
+      return;
+    }
+    setAuthMode(button.dataset.authMode);
+  });
+}
+
 for (const button of filterButtons) {
   button.addEventListener("click", async () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
 
@@ -1454,7 +1640,7 @@ for (const button of filterButtons) {
 
 for (const button of dueScopeButtons) {
   button.addEventListener("click", async () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
 
@@ -1466,7 +1652,7 @@ for (const button of dueScopeButtons) {
 
 for (const button of viewModeButtons) {
   button.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
 
@@ -1478,7 +1664,7 @@ for (const button of viewModeButtons) {
 
 for (const button of composeModeButtons) {
   button.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
 
@@ -1505,7 +1691,7 @@ for (const button of quickDateButtons) {
 let searchDebounceTimer = null;
 if (searchInputEl) {
   searchInputEl.addEventListener("input", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
 
@@ -1521,7 +1707,7 @@ if (searchInputEl) {
 
 if (projectFilterSelectEl) {
   projectFilterSelectEl.addEventListener("change", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     loadTodos();
@@ -1530,7 +1716,7 @@ if (projectFilterSelectEl) {
 
 if (dueFromInputEl) {
   dueFromInputEl.addEventListener("change", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     loadTodos();
@@ -1539,7 +1725,7 @@ if (dueFromInputEl) {
 
 if (dueToInputEl) {
   dueToInputEl.addEventListener("change", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     loadTodos();
@@ -1548,7 +1734,7 @@ if (dueToInputEl) {
 
 if (sortSelectEl) {
   sortSelectEl.addEventListener("change", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     loadTodos();
@@ -1557,7 +1743,7 @@ if (sortSelectEl) {
 
 if (resetQueryButtonEl) {
   resetQueryButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     resetQueryFilters();
@@ -1587,7 +1773,7 @@ resetComposerButtonEl.addEventListener("click", () => {
 
 if (clearCompletedButtonEl) {
   clearCompletedButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onClearCompleted();
@@ -1596,7 +1782,7 @@ if (clearCompletedButtonEl) {
 
 if (bulkCompleteButtonEl) {
   bulkCompleteButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onBulkCompleteFiltered();
@@ -1605,7 +1791,7 @@ if (bulkCompleteButtonEl) {
 
 if (bulkProjectButtonEl) {
   bulkProjectButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onBulkProjectFiltered();
@@ -1614,7 +1800,7 @@ if (bulkProjectButtonEl) {
 
 if (bulkDueDateButtonEl) {
   bulkDueDateButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onBulkDueDateFiltered();
@@ -1623,7 +1809,7 @@ if (bulkDueDateButtonEl) {
 
 if (exportButtonEl) {
   exportButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onExportTodos();
@@ -1632,7 +1818,7 @@ if (exportButtonEl) {
 
 if (importButtonEl) {
   importButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onImportTodos();
@@ -1641,7 +1827,7 @@ if (importButtonEl) {
 
 if (undoButtonEl) {
   undoButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
     onUndoLastOperation();
@@ -1650,11 +1836,24 @@ if (undoButtonEl) {
 
 if (loadMoreButtonEl) {
   loadMoreButtonEl.addEventListener("click", () => {
-    if (state.busy) {
+    if (state.busy || !state.accessEnabled) {
       return;
     }
 
     loadTodos({ append: true });
+  });
+}
+
+if (authFormEl) {
+  authFormEl.addEventListener("submit", onAuthSubmit);
+}
+
+if (logoutButtonEl) {
+  logoutButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onLogout();
   });
 }
 
@@ -1685,4 +1884,6 @@ if (modalImportFileInputEl) {
 todoFormEl.addEventListener("submit", onAddTodo);
 
 setComposeMode("single");
-loadTodos();
+setAuthMode("login");
+setAccessEnabled(false, null);
+bootstrapAuth();

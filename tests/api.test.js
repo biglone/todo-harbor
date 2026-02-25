@@ -36,7 +36,15 @@ function createTestRequest() {
   clearRequireCache("../src/db");
   clearRequireCache("../src/app");
   const app = require("../src/app");
-  return supertest(app);
+  return supertest.agent(app);
+}
+
+async function registerAndLogin(request) {
+  const email = `user-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+  const password = "password123";
+  const res = await request.post("/api/auth/register").send({ email, password });
+  assert.equal(res.status, 201);
+  return res.body;
 }
 
 async function createTodo(request, payload) {
@@ -60,6 +68,8 @@ function assertDescendingIds(items) {
 describe("Todos API", () => {
   test("create edit delete and cascade", async () => {
     const request = createTestRequest();
+    await registerAndLogin(request);
+
     const parent = await createTodo(request, { title: "Parent" });
     const child = await createTodo(request, { title: "Child", parentId: parent.id });
     assert.ok(child.parent_id === parent.id);
@@ -81,6 +91,7 @@ describe("Todos API", () => {
 
   test("bulk create and batch update", async () => {
     const request = createTestRequest();
+    await registerAndLogin(request);
 
     const bulk = await request.post("/api/todos/bulk").send({
       titles: ["A", "B", "C"],
@@ -116,6 +127,7 @@ describe("Todos API", () => {
 
   test("hierarchy rules", async () => {
     const request = createTestRequest();
+    await registerAndLogin(request);
 
     const parent = await createTodo(request, { title: "Parent" });
     const child = await createTodo(request, { title: "Child", parentId: parent.id });
@@ -149,6 +161,7 @@ describe("Todos API", () => {
 
   test("due scope filter and snapshot", async () => {
     const request = createTestRequest();
+    await registerAndLogin(request);
 
     await createTodo(request, { title: "Overdue", dueDate: dateOffset(-1) });
     await createTodo(request, { title: "Today", dueDate: dateOffset(0) });
@@ -179,6 +192,8 @@ describe("Todos API", () => {
 
   test("pagination", async () => {
     const request = createTestRequest();
+    await registerAndLogin(request);
+
     const firstBatch = Array.from({ length: 50 }, (_value, idx) => `Task ${idx + 1}`);
     const secondBatch = Array.from({ length: 15 }, (_value, idx) => `Task ${idx + 51}`);
 
@@ -201,6 +216,8 @@ describe("Todos API", () => {
 
   test("export import and undo", async () => {
     const request = createTestRequest();
+    await registerAndLogin(request);
+
     await createTodo(request, { title: "Keep 1" });
     await createTodo(request, { title: "Keep 2" });
 

@@ -1,5 +1,7 @@
 const path = require("path");
 const express = require("express");
+const cookieSession = require("cookie-session");
+const bcrypt = require("bcryptjs");
 const {
   listTodos,
   createTodo,
@@ -18,6 +20,11 @@ const {
   getStats,
   listParentCandidates,
   listProjects,
+  createUser,
+  getUserByEmail,
+  getUserById,
+  countUsers,
+  claimUnownedTodos,
   dbFile,
 } = require("./db");
 
@@ -30,6 +37,17 @@ const MAX_PAGE_SIZE = 200;
 const app = express();
 
 app.use(express.json({ limit: "6mb" }));
+
+app.use(
+  cookieSession({
+    name: "todo_harbor_session",
+    keys: [process.env.SESSION_SECRET || "todo-harbor-dev"],
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+  }),
+);
 
 app.use((req, res, next) => {
   const startAt = process.hrtime.bigint();
@@ -60,6 +78,107 @@ app.get("/api/health", (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function requireAuth(req, res, next) {
+  const userId = Number(req.session?.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const user = getUserById(userId);
+  if (!user) {
+    req.session = null;
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  req.user = user;
+  return next();
+}
+
+app.post("/api/auth/register", (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ error: "email is invalid" });
+  }
+
+  if (password.length < 8 || password.length > 72) {
+    return res.status(400).json({ error: "password must be 8-72 characters" });
+  }
+
+  const existing = getUserByEmail(email);
+  if (existing) {
+    return res.status(409).json({ error: "email already registered" });
+  }
+
+  const isFirstUser = countUsers() === 0;
+  const passwordHash = bcrypt.hashSync(password, 10);
+  const user = createUser({ email, passwordHash });
+
+  if (isFirstUser) {
+    claimUnownedTodos(user.id);
+  }
+
+  req.session.userId = user.id;
+  req.session.email = user.email;
+
+  return res.status(201).json({
+    id: user.id,
+    email: user.email,
+    created_at: user.created_at,
+  });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ error: "email is invalid" });
+  }
+
+  if (!password) {
+    return res.status(400).json({ error: "password is required" });
+  }
+
+  const user = getUserByEmail(email);
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    return res.status(401).json({ error: "invalid credentials" });
+  }
+
+  req.session.userId = user.id;
+  req.session.email = user.email;
+
+  return res.json({
+    id: user.id,
+    email: user.email,
+    created_at: user.created_at,
+  });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  req.session = null;
+  return res.json({ ok: true });
+});
+
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  return res.json({
+    id: req.user.id,
+    email: req.user.email,
+    created_at: req.user.created_at,
+  });
+});
+
+app.use("/api/todos", requireAuth);
 
 app.get("/api/todos", (req, res) => {
   const filter = String(req.query.filter || "all");
@@ -127,6 +246,7 @@ app.get("/api/todos", (req, res) => {
   }
 
   const result = listTodos({
+    userId: req.user.id,
     filter,
     project,
     keyword,
@@ -141,23 +261,23 @@ app.get("/api/todos", (req, res) => {
   return res.json({
     filter,
     dueScope,
-    stats: getStats(),
+    stats: getStats(req.user.id),
     pagination: result.pagination,
     dueSnapshot: result.dueSnapshot,
     items: result.items,
   });
 });
 
-app.get("/api/todos/meta", (_req, res) => {
+app.get("/api/todos/meta", (req, res) => {
   return res.json({
-    projects: listProjects(),
-    parents: listParentCandidates(),
-    undoAvailable: hasUndoSnapshot(),
+    projects: listProjects(req.user.id),
+    parents: listParentCandidates(req.user.id),
+    undoAvailable: hasUndoSnapshot(req.user.id),
   });
 });
 
-app.get("/api/todos/export", (_req, res) => {
-  const items = exportTodos();
+app.get("/api/todos/export", (req, res) => {
+  const items = exportTodos(req.user.id);
   return res.json({
     count: items.length,
     exportedAt: new Date().toISOString(),
@@ -183,10 +303,10 @@ app.post("/api/todos/import", (req, res) => {
   }
 
   try {
-    const result = importTodos({ items, mode });
+    const result = importTodos(req.user.id, { items, mode });
     return res.status(201).json({
       ...result,
-      stats: getStats(),
+      stats: getStats(req.user.id),
     });
   } catch (error) {
     return res.status(400).json({
@@ -195,8 +315,8 @@ app.post("/api/todos/import", (req, res) => {
   }
 });
 
-app.post("/api/todos/undo", (_req, res) => {
-  const result = undoLastOperation();
+app.post("/api/todos/undo", (req, res) => {
+  const result = undoLastOperation(req.user.id);
   if (!result.restored) {
     return res.status(409).json({
       error: "No undo snapshot available",
@@ -205,7 +325,7 @@ app.post("/api/todos/undo", (_req, res) => {
 
   return res.json({
     ...result,
-    stats: getStats(),
+    stats: getStats(req.user.id),
   });
 });
 
@@ -245,7 +365,7 @@ function parsePositiveInteger(rawValue, { field, defaultValue, min, max }) {
   return { value };
 }
 
-function parseTodoInput(body, { titleRequired = true } = {}) {
+function parseTodoInput(body, userId, { titleRequired = true } = {}) {
   const title = String(body?.title || "").trim();
   if (titleRequired && !title) {
     return { error: "title is required" };
@@ -272,7 +392,7 @@ function parseTodoInput(body, { titleRequired = true } = {}) {
       return { error: "parentId must be a positive integer" };
     }
 
-    const parentTodo = getTodo(parentId);
+    const parentTodo = getTodo(userId, parentId);
     if (!parentTodo) {
       return { error: "parentId does not exist" };
     }
@@ -292,7 +412,7 @@ function parseTodoInput(body, { titleRequired = true } = {}) {
   };
 }
 
-function hasParentLoop(todoId, nextParentId) {
+function hasParentLoop(userId, todoId, nextParentId) {
   if (!nextParentId) {
     return false;
   }
@@ -306,7 +426,7 @@ function hasParentLoop(todoId, nextParentId) {
     }
 
     visited.add(currentId);
-    const current = getTodo(currentId);
+    const current = getTodo(userId, currentId);
     if (!current || !current.parent_id) {
       return false;
     }
@@ -317,7 +437,7 @@ function hasParentLoop(todoId, nextParentId) {
   return false;
 }
 
-function parseTodoUpdateInput(body, existingTodo) {
+function parseTodoUpdateInput(body, userId, existingTodo) {
   const normalized = {
     title: body?.title ?? existingTodo.title,
     project: body?.project ?? existingTodo.project,
@@ -325,7 +445,7 @@ function parseTodoUpdateInput(body, existingTodo) {
     parentId: body?.parentId !== undefined ? body?.parentId : existingTodo.parent_id,
   };
 
-  const parsed = parseTodoInput(normalized);
+  const parsed = parseTodoInput(normalized, userId);
   if (parsed.error) {
     return parsed;
   }
@@ -336,7 +456,7 @@ function parseTodoUpdateInput(body, existingTodo) {
     };
   }
 
-  if (hasParentLoop(existingTodo.id, parsed.value.parentId)) {
+  if (hasParentLoop(userId, existingTodo.id, parsed.value.parentId)) {
     return {
       error: "parentId would create a cycle",
     };
@@ -346,14 +466,14 @@ function parseTodoUpdateInput(body, existingTodo) {
 }
 
 app.post("/api/todos", (req, res) => {
-  const parsed = parseTodoInput(req.body);
+  const parsed = parseTodoInput(req.body, req.user.id);
   if (parsed.error) {
     return res.status(400).json({
       error: parsed.error,
     });
   }
 
-  const todo = createTodo(parsed.value);
+  const todo = createTodo(req.user.id, parsed.value);
   return res.status(201).json(todo);
 });
 
@@ -376,6 +496,7 @@ app.post("/api/todos/bulk", (req, res) => {
       ...req.body,
       title: "placeholder",
     },
+    req.user.id,
     { titleRequired: false },
   );
 
@@ -412,7 +533,7 @@ app.post("/api/todos/bulk", (req, res) => {
     });
   }
 
-  const created = createTodosBulk(items);
+  const created = createTodosBulk(req.user.id, items);
   return res.status(201).json({
     count: created.length,
     items: created,
@@ -486,15 +607,15 @@ app.post("/api/todos/batch", (req, res) => {
     });
   }
 
-  const result = updateTodosBatch(payload);
+  const result = updateTodosBatch(req.user.id, payload);
   return res.json({
     ...result,
     skipped: ids.length - result.count,
   });
 });
 
-app.delete("/api/todos/completed", (_req, res) => {
-  const count = clearCompletedTodos();
+app.delete("/api/todos/completed", (req, res) => {
+  const count = clearCompletedTodos(req.user.id);
   return res.json({
     count,
   });
@@ -508,14 +629,14 @@ app.delete("/api/todos/:id", (req, res) => {
     });
   }
 
-  const existingTodo = getTodo(id);
+  const existingTodo = getTodo(req.user.id, id);
   if (!existingTodo) {
     return res.status(404).json({
       error: "Todo not found",
     });
   }
 
-  const deleted = deleteTodoTree(id);
+  const deleted = deleteTodoTree(req.user.id, id);
   return res.json(deleted);
 });
 
@@ -527,21 +648,21 @@ app.patch("/api/todos/:id", (req, res) => {
     });
   }
 
-  const existingTodo = getTodo(id);
+  const existingTodo = getTodo(req.user.id, id);
   if (!existingTodo) {
     return res.status(404).json({
       error: "Todo not found",
     });
   }
 
-  const parsed = parseTodoUpdateInput(req.body, existingTodo);
+  const parsed = parseTodoUpdateInput(req.body, req.user.id, existingTodo);
   if (parsed.error) {
     return res.status(400).json({
       error: parsed.error,
     });
   }
 
-  const todo = updateTodo(id, parsed.value);
+  const todo = updateTodo(req.user.id, id, parsed.value);
   return res.json(todo);
 });
 
@@ -553,20 +674,20 @@ app.patch("/api/todos/:id/toggle", (req, res) => {
     });
   }
 
-  const existingTodo = getTodo(id);
+  const existingTodo = getTodo(req.user.id, id);
   if (!existingTodo) {
     return res.status(404).json({
       error: "Todo not found",
     });
   }
 
-  if (!existingTodo.completed && hasActiveChildren(id)) {
+  if (!existingTodo.completed && hasActiveChildren(req.user.id, id)) {
     return res.status(400).json({
       error: "Cannot mark a task complete while it still has active child tasks",
     });
   }
 
-  const todo = toggleTodo(id);
+  const todo = toggleTodo(req.user.id, id);
   return res.json(todo);
 });
 

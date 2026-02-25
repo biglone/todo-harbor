@@ -23,8 +23,46 @@
           <h1>你的代办事项港湾</h1>
           <p class="subtitle">自动保存历史待办与完成状态，刷新页面不会丢失。</p>
         </div>
-        <span class="status-pill" id="syncStatus">已连接</span>
+        <div class="topbar-actions">
+          <span class="status-pill" id="syncStatus">已连接</span>
+          <div class="user-bar is-hidden" id="userBar">
+            <span id="userEmail"></span>
+            <button id="logoutButton" class="secondary-button compact-button" type="button">退出登录</button>
+          </div>
+        </div>
       </header>
+
+      <section class="panel auth-panel" id="authPanel" aria-label="登录注册">
+        <div class="auth-head">
+          <div>
+            <p class="auth-kicker">账号</p>
+            <h2>登录后同步待办</h2>
+            <p class="auth-note">注册后数据只对当前账号可见。</p>
+          </div>
+          <div class="auth-modes" role="tablist" aria-label="登录注册模式">
+            <button class="auth-mode is-active" data-auth-mode="login" role="tab" aria-selected="true">登录</button>
+            <button class="auth-mode" data-auth-mode="register" role="tab" aria-selected="false">注册</button>
+          </div>
+        </div>
+        <form id="authForm" class="auth-form">
+          <label class="field" for="authEmail">
+            <span>邮箱</span>
+            <input id="authEmail" type="email" autocomplete="email" placeholder="name@example.com" />
+          </label>
+          <label class="field" for="authPassword">
+            <span>密码</span>
+            <input id="authPassword" type="password" autocomplete="current-password" placeholder="至少 8 位" />
+          </label>
+          <label class="field is-hidden" id="authPasswordConfirmField" for="authPasswordConfirm">
+            <span>确认密码</span>
+            <input id="authPasswordConfirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
+          </label>
+          <p id="authMessage" class="auth-message"></p>
+          <div class="auth-actions">
+            <button type="submit" id="authSubmitButton">登录</button>
+          </div>
+        </form>
+      </section>
 
       <section class="panel composer-panel" aria-label="创建待办">
         <div class="composer-head">

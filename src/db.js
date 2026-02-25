@@ -10,10 +10,11 @@ fs.mkdirSync(dataDir, { recursive: true });
 const db = new Database(dbFile);
 db.pragma("journal_mode = WAL");
 
-let lastUndoSnapshot = null;
+const lastUndoSnapshots = new Map();
 
 const listFilterWhereClause = `
-  (
+  user_id = @user_id
+  AND (
     @filter = 'all'
     OR (@filter = 'active' AND completed = 0)
     OR (@filter = 'completed' AND completed = 1)
@@ -40,8 +41,16 @@ const listFilterWhereWithScopeClause = `
 `;
 
 const createTablesSQL = `
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
     title TEXT NOT NULL CHECK (length(trim(title)) > 0),
     project TEXT NOT NULL DEFAULT '默认项目',
     due_date TEXT,
@@ -61,6 +70,10 @@ const tableColumns = new Set(
     .map((column) => column.name),
 );
 
+if (!tableColumns.has("user_id")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN user_id INTEGER;`);
+}
+
 if (!tableColumns.has("project")) {
   db.exec(`ALTER TABLE todos ADD COLUMN project TEXT NOT NULL DEFAULT '默认项目';`);
 }
@@ -74,10 +87,39 @@ if (!tableColumns.has("parent_id")) {
 }
 
 db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos (user_id);
   CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos (completed);
   CREATE INDEX IF NOT EXISTS idx_todos_project ON todos (project);
   CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos (due_date);
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
+`);
+
+const createUserQuery = db.prepare(`
+  INSERT INTO users (email, password_hash)
+  VALUES (@email, @password_hash)
+`);
+
+const getUserByEmailQuery = db.prepare(`
+  SELECT id, email, password_hash, created_at
+  FROM users
+  WHERE email = @email
+`);
+
+const getUserByIdQuery = db.prepare(`
+  SELECT id, email, created_at
+  FROM users
+  WHERE id = @id
+`);
+
+const countUsersQuery = db.prepare(`
+  SELECT COUNT(*) AS total
+  FROM users
+`);
+
+const claimUnownedTodosQuery = db.prepare(`
+  UPDATE todos
+  SET user_id = @user_id
+  WHERE user_id IS NULL
 `);
 
 const listTodosCreatedDescQuery = db.prepare(`
@@ -135,8 +177,8 @@ const countDueSnapshotQuery = db.prepare(`
 `);
 
 const createTodoQuery = db.prepare(`
-  INSERT INTO todos (title, project, due_date, parent_id)
-  VALUES (@title, @project, @due_date, @parent_id)
+  INSERT INTO todos (user_id, title, project, due_date, parent_id)
+  VALUES (@user_id, @title, @project, @due_date, @parent_id)
 `);
 
 const updateTodoQuery = db.prepare(`
@@ -146,13 +188,13 @@ const updateTodoQuery = db.prepare(`
     project = @project,
     due_date = @due_date,
     parent_id = @parent_id
-  WHERE id = @id
+  WHERE id = @id AND user_id = @user_id
 `);
 
 const getTodoByIdQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
-  WHERE id = @id
+  WHERE id = @id AND user_id = @user_id
 `);
 
 const updateTodoStatusQuery = db.prepare(`
@@ -160,7 +202,7 @@ const updateTodoStatusQuery = db.prepare(`
   SET
     completed = @completed,
     completed_at = @completed_at
-  WHERE id = @id
+  WHERE id = @id AND user_id = @user_id
 `);
 
 const updateTodoProjectDueQuery = db.prepare(`
@@ -168,42 +210,49 @@ const updateTodoProjectDueQuery = db.prepare(`
   SET
     project = @project,
     due_date = @due_date
-  WHERE id = @id
+  WHERE id = @id AND user_id = @user_id
 `);
 
 const listActiveChildIdsQuery = db.prepare(`
   SELECT id
   FROM todos
-  WHERE parent_id = @id AND completed = 0
+  WHERE parent_id = @id AND completed = 0 AND user_id = @user_id
 `);
 
 const listTodoTreeIdsQuery = db.prepare(`
   WITH RECURSIVE tree(id) AS (
-    SELECT id FROM todos WHERE id = @id
+    SELECT id FROM todos WHERE id = @id AND user_id = @user_id
     UNION ALL
     SELECT child.id
     FROM todos AS child
     JOIN tree ON child.parent_id = tree.id
+    WHERE child.user_id = @user_id
   )
   SELECT id FROM tree
 `);
 
 const deleteTodoByIdQuery = db.prepare(`
   DELETE FROM todos
-  WHERE id = @id
+  WHERE id = @id AND user_id = @user_id
 `);
 
 const deleteCompletedTodosQuery = db.prepare(`
   DELETE FROM todos
-  WHERE completed = 1
+  WHERE completed = 1 AND user_id = @user_id
+`);
+
+const deleteTodosByUserQuery = db.prepare(`
+  DELETE FROM todos
+  WHERE user_id = @user_id
 `);
 
 const clearOrphanParentsQuery = db.prepare(`
   UPDATE todos
   SET parent_id = NULL
   WHERE
-    parent_id IS NOT NULL
-    AND parent_id NOT IN (SELECT id FROM todos)
+    user_id = @user_id
+    AND parent_id IS NOT NULL
+    AND parent_id NOT IN (SELECT id FROM todos WHERE user_id = @user_id)
 `);
 
 const countTodosQuery = db.prepare(`
@@ -212,54 +261,52 @@ const countTodosQuery = db.prepare(`
     SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) AS completed,
     SUM(CASE WHEN completed = 0 THEN 1 ELSE 0 END) AS active
   FROM todos
+  WHERE user_id = @user_id
 `);
 
 const countCompletedTodosQuery = db.prepare(`
   SELECT COUNT(*) AS total
   FROM todos
-  WHERE completed = 1
+  WHERE completed = 1 AND user_id = @user_id
 `);
 
 const listParentCandidatesQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
-  WHERE completed = 0
+  WHERE completed = 0 AND user_id = @user_id
   ORDER BY id DESC
 `);
 
 const listProjectsQuery = db.prepare(`
   SELECT project, COUNT(*) AS count
   FROM todos
+  WHERE user_id = @user_id
   GROUP BY project
   ORDER BY LOWER(project) ASC
 `);
 
-const listAllTodosRawQuery = db.prepare(`
+const listTodosByUserRawQuery = db.prepare(`
   SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
   FROM todos
+  WHERE user_id = @user_id
   ORDER BY id ASC
 `);
 
 const insertTodoRawQuery = db.prepare(`
-  INSERT INTO todos (id, title, project, due_date, parent_id, completed, created_at, completed_at)
-  VALUES (@id, @title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
+  INSERT INTO todos (id, user_id, title, project, due_date, parent_id, completed, created_at, completed_at)
+  VALUES (@id, @user_id, @title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
 `);
 
 const insertImportedTodoQuery = db.prepare(`
-  INSERT INTO todos (title, project, due_date, parent_id, completed, created_at, completed_at)
-  VALUES (@title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
+  INSERT INTO todos (user_id, title, project, due_date, parent_id, completed, created_at, completed_at)
+  VALUES (@user_id, @title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
 `);
 
 const updateImportedParentQuery = db.prepare(`
   UPDATE todos
   SET parent_id = @parent_id
-  WHERE id = @id
+  WHERE id = @id AND user_id = @user_id
 `);
-
-const deleteAllTodosQuery = db.prepare(`DELETE FROM todos`);
-const resetTodosSequenceQuery = db.prepare(`DELETE FROM sqlite_sequence WHERE name = 'todos'`);
-const updateTodosSequenceQuery = db.prepare(`UPDATE sqlite_sequence SET seq = @seq WHERE name = 'todos'`);
-const insertTodosSequenceQuery = db.prepare(`INSERT INTO sqlite_sequence (name, seq) VALUES ('todos', @seq)`);
 
 function mapTodo(row) {
   return {
@@ -306,6 +353,14 @@ function getDateAfterDaysString(days) {
   return formatDateForInput(date);
 }
 
+function requireUserId(rawUserId) {
+  const userId = Number(rawUserId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new Error("userId is required");
+  }
+  return userId;
+}
+
 function normalizeListOptions(options = "all") {
   const defaults = {
     filter: "all",
@@ -338,6 +393,7 @@ function normalizeListOptions(options = "all") {
     : 60;
 
   return {
+    user_id: requireUserId(merged.userId),
     filter: String(merged.filter || "all"),
     project: String(merged.project || "").trim(),
     keyword: String(merged.keyword || "").trim(),
@@ -397,13 +453,14 @@ function listTodos(options = "all") {
   };
 }
 
-function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId }) {
+function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId, userId }) {
   const title = String(rawTitle || "").trim();
   const project = String(rawProject || "").trim() || "默认项目";
   const dueDate = rawDueDate ? String(rawDueDate).trim() : null;
   const parentIdValue = Number.isInteger(parentId) && parentId > 0 ? parentId : null;
 
   return {
+    user_id: requireUserId(userId),
     title,
     project,
     due_date: dueDate || null,
@@ -411,23 +468,25 @@ function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: r
   };
 }
 
-function saveUndoSnapshot() {
-  lastUndoSnapshot = listAllTodosRawQuery.all().map(mapRawTodo);
+function saveUndoSnapshot(userId) {
+  const id = requireUserId(userId);
+  lastUndoSnapshots.set(id, listTodosByUserRawQuery.all({ user_id: id }).map(mapRawTodo));
 }
 
-function hasUndoSnapshot() {
-  return Array.isArray(lastUndoSnapshot);
+function hasUndoSnapshot(userId) {
+  const id = requireUserId(userId);
+  return lastUndoSnapshots.has(id);
 }
 
-function restoreSnapshot(snapshotRows) {
+function restoreSnapshot(userId, snapshotRows) {
+  const id = requireUserId(userId);
   const restore = db.transaction((rows) => {
-    deleteAllTodosQuery.run();
-    resetTodosSequenceQuery.run();
+    deleteTodosByUserQuery.run({ user_id: id });
 
-    let maxId = 0;
     for (const row of rows) {
       insertTodoRawQuery.run({
         id: Number(row.id),
+        user_id: id,
         title: String(row.title),
         project: String(row.project || "默认项目"),
         due_date: row.due_date ? String(row.due_date) : null,
@@ -436,33 +495,26 @@ function restoreSnapshot(snapshotRows) {
         created_at: String(row.created_at || new Date().toISOString()),
         completed_at: row.completed_at ? String(row.completed_at) : null,
       });
-      maxId = Math.max(maxId, Number(row.id) || 0);
     }
 
-    if (maxId > 0) {
-      const updateResult = updateTodosSequenceQuery.run({ seq: maxId });
-      if (updateResult.changes <= 0) {
-        insertTodosSequenceQuery.run({ seq: maxId });
-      }
-    }
-
-    clearOrphanParentsQuery.run();
+    clearOrphanParentsQuery.run({ user_id: id });
   });
 
   restore(snapshotRows);
 }
 
-function undoLastOperation() {
-  if (!hasUndoSnapshot()) {
+function undoLastOperation(userId) {
+  const id = requireUserId(userId);
+  if (!lastUndoSnapshots.has(id)) {
     return {
       restored: false,
       count: 0,
     };
   }
 
-  const snapshot = lastUndoSnapshot;
-  restoreSnapshot(snapshot);
-  lastUndoSnapshot = null;
+  const snapshot = lastUndoSnapshots.get(id);
+  restoreSnapshot(id, snapshot);
+  lastUndoSnapshots.delete(id);
 
   return {
     restored: true,
@@ -472,20 +524,20 @@ function undoLastOperation() {
 
 function insertTodo(payload) {
   const result = createTodoQuery.run(payload);
-  return getTodo(result.lastInsertRowid);
+  return getTodo(payload.user_id, result.lastInsertRowid);
 }
 
-function createTodo(payload) {
-  saveUndoSnapshot();
-  return insertTodo(normalizeTodoPayload(payload));
+function createTodo(userId, payload) {
+  saveUndoSnapshot(userId);
+  return insertTodo(normalizeTodoPayload({ ...payload, userId }));
 }
 
-function createTodosBulk(items) {
-  saveUndoSnapshot();
+function createTodosBulk(userId, items) {
+  saveUndoSnapshot(userId);
   const createMany = db.transaction((rows) => {
     const created = [];
     for (const row of rows) {
-      created.push(insertTodo(normalizeTodoPayload(row)));
+      created.push(insertTodo(normalizeTodoPayload({ ...row, userId })));
     }
     return created;
   });
@@ -493,46 +545,48 @@ function createTodosBulk(items) {
   return createMany(items);
 }
 
-function updateTodo(id, payload) {
-  saveUndoSnapshot();
-  const normalized = normalizeTodoPayload(payload);
+function updateTodo(userId, id, payload) {
+  saveUndoSnapshot(userId);
+  const normalized = normalizeTodoPayload({ ...payload, userId });
   updateTodoQuery.run({
     id,
     ...normalized,
   });
-  return getTodo(id);
+  return getTodo(userId, id);
 }
 
-function getTodo(id) {
-  const todo = getTodoByIdQuery.get({ id });
+function getTodo(userId, id) {
+  const todo = getTodoByIdQuery.get({ id, user_id: requireUserId(userId) });
   return todo ? mapTodo(todo) : null;
 }
 
-function toggleTodo(id) {
-  const existing = getTodo(id);
+function toggleTodo(userId, id) {
+  const existing = getTodo(userId, id);
   if (!existing) {
     return null;
   }
 
-  saveUndoSnapshot();
+  saveUndoSnapshot(userId);
   const nextCompleted = !existing.completed;
   updateTodoStatusQuery.run({
     id,
+    user_id: requireUserId(userId),
     completed: Number(nextCompleted),
     completed_at: nextCompleted ? new Date().toISOString() : null,
   });
 
-  return getTodo(id);
+  return getTodo(userId, id);
 }
 
-function hasActiveChildren(id) {
-  const rows = listActiveChildIdsQuery.all({ id });
+function hasActiveChildren(userId, id) {
+  const rows = listActiveChildIdsQuery.all({ id, user_id: requireUserId(userId) });
   return rows.length > 0;
 }
 
-function deleteTodoTree(id) {
+function deleteTodoTree(userId, id) {
+  const userIdValue = requireUserId(userId);
   const ids = listTodoTreeIdsQuery
-    .all({ id })
+    .all({ id, user_id: userIdValue })
     .map((row) => Number(row.id))
     .filter((todoId) => Number.isInteger(todoId) && todoId > 0);
 
@@ -543,12 +597,12 @@ function deleteTodoTree(id) {
     };
   }
 
-  saveUndoSnapshot();
+  saveUndoSnapshot(userIdValue);
   const removeTree = db.transaction((targetIds) => {
     for (const targetId of targetIds) {
-      deleteTodoByIdQuery.run({ id: targetId });
+      deleteTodoByIdQuery.run({ id: targetId, user_id: userIdValue });
     }
-    clearOrphanParentsQuery.run();
+    clearOrphanParentsQuery.run({ user_id: userIdValue });
   });
 
   removeTree(ids);
@@ -558,23 +612,25 @@ function deleteTodoTree(id) {
   };
 }
 
-function clearCompletedTodos() {
-  const row = countCompletedTodosQuery.get() || { total: 0 };
+function clearCompletedTodos(userId) {
+  const userIdValue = requireUserId(userId);
+  const row = countCompletedTodosQuery.get({ user_id: userIdValue }) || { total: 0 };
   if (Number(row.total || 0) <= 0) {
     return 0;
   }
 
-  saveUndoSnapshot();
+  saveUndoSnapshot(userIdValue);
   const clearCompleted = db.transaction(() => {
-    const deleted = deleteCompletedTodosQuery.run();
-    clearOrphanParentsQuery.run();
+    const deleted = deleteCompletedTodosQuery.run({ user_id: userIdValue });
+    clearOrphanParentsQuery.run({ user_id: userIdValue });
     return Number(deleted.changes || 0);
   });
 
   return clearCompleted();
 }
 
-function updateTodosBatch({ ids, project, dueDate, completed }) {
+function updateTodosBatch(userId, { ids, project, dueDate, completed }) {
+  const userIdValue = requireUserId(userId);
   const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
   if (!uniqueIds.length) {
     return {
@@ -583,7 +639,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
     };
   }
 
-  saveUndoSnapshot();
+  saveUndoSnapshot(userIdValue);
   const applyBatch = db.transaction((targetIds) => {
     const updatedIds = new Set();
     const completedAt = completed === true ? new Date().toISOString() : null;
@@ -597,7 +653,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
         changed = false;
         for (const id of completionEligibleIds) {
           const activeChildIds = listActiveChildIdsQuery
-            .all({ id })
+            .all({ id, user_id: userIdValue })
             .map((row) => Number(row.id))
             .filter((childId) => Number.isInteger(childId) && childId > 0);
 
@@ -611,7 +667,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
     }
 
     for (const id of targetIds) {
-      const current = getTodo(id);
+      const current = getTodo(userIdValue, id);
       if (!current) {
         continue;
       }
@@ -621,6 +677,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
         const nextDueDate = dueDate !== undefined ? dueDate : current.due_date;
         const updateResult = updateTodoProjectDueQuery.run({
           id,
+          user_id: userIdValue,
           project: nextProject,
           due_date: nextDueDate || null,
         });
@@ -637,6 +694,7 @@ function updateTodosBatch({ ids, project, dueDate, completed }) {
 
         const updateResult = updateTodoStatusQuery.run({
           id,
+          user_id: userIdValue,
           completed: Number(completed),
           completed_at: completed ? completedAt : null,
         });
@@ -698,15 +756,15 @@ function normalizeImportItem(rawItem, index) {
   };
 }
 
-function importTodos({ items, mode = "merge" }) {
+function importTodos(userId, { items, mode = "merge" }) {
+  const userIdValue = requireUserId(userId);
   const normalizedMode = mode === "replace" ? "replace" : "merge";
   const normalizedItems = items.map((item, index) => normalizeImportItem(item, index));
 
-  saveUndoSnapshot();
+  saveUndoSnapshot(userIdValue);
   const runImport = db.transaction((rows) => {
     if (normalizedMode === "replace") {
-      deleteAllTodosQuery.run();
-      resetTodosSequenceQuery.run();
+      deleteTodosByUserQuery.run({ user_id: userIdValue });
     }
 
     const keyToNewId = new Map();
@@ -714,6 +772,7 @@ function importTodos({ items, mode = "merge" }) {
 
     for (const row of rows) {
       const result = insertImportedTodoQuery.run({
+        user_id: userIdValue,
         title: row.title,
         project: row.project,
         due_date: row.due_date,
@@ -736,10 +795,10 @@ function importTodos({ items, mode = "merge" }) {
       if (!parentId || parentId === row.id) {
         continue;
       }
-      updateImportedParentQuery.run({ id: row.id, parent_id: parentId });
+      updateImportedParentQuery.run({ id: row.id, parent_id: parentId, user_id: userIdValue });
     }
 
-    clearOrphanParentsQuery.run();
+    clearOrphanParentsQuery.run({ user_id: userIdValue });
     return importedRows.length;
   });
 
@@ -750,8 +809,9 @@ function importTodos({ items, mode = "merge" }) {
   };
 }
 
-function exportTodos() {
-  return listAllTodosRawQuery.all().map((row) => ({
+function exportTodos(userId) {
+  const userIdValue = requireUserId(userId);
+  return listTodosByUserRawQuery.all({ user_id: userIdValue }).map((row) => ({
     id: Number(row.id),
     title: String(row.title),
     project: String(row.project || "默认项目"),
@@ -763,8 +823,8 @@ function exportTodos() {
   }));
 }
 
-function getStats() {
-  const row = countTodosQuery.get();
+function getStats(userId) {
+  const row = countTodosQuery.get({ user_id: requireUserId(userId) });
   return {
     total: Number(row.total || 0),
     completed: Number(row.completed || 0),
@@ -772,15 +832,39 @@ function getStats() {
   };
 }
 
-function listParentCandidates() {
-  return listParentCandidatesQuery.all().map(mapTodo);
+function listParentCandidates(userId) {
+  return listParentCandidatesQuery.all({ user_id: requireUserId(userId) }).map(mapTodo);
 }
 
-function listProjects() {
-  return listProjectsQuery.all().map((row) => ({
+function listProjects(userId) {
+  return listProjectsQuery.all({ user_id: requireUserId(userId) }).map((row) => ({
     name: row.project,
     count: Number(row.count || 0),
   }));
+}
+
+function createUser({ email, passwordHash }) {
+  const result = createUserQuery.run({ email, password_hash: passwordHash });
+  return getUserById(result.lastInsertRowid);
+}
+
+function getUserByEmail(email) {
+  return getUserByEmailQuery.get({ email }) || null;
+}
+
+function getUserById(id) {
+  return getUserByIdQuery.get({ id }) || null;
+}
+
+function countUsers() {
+  const row = countUsersQuery.get() || { total: 0 };
+  return Number(row.total || 0);
+}
+
+function claimUnownedTodos(userId) {
+  const userIdValue = requireUserId(userId);
+  const result = claimUnownedTodosQuery.run({ user_id: userIdValue });
+  return Number(result.changes || 0);
 }
 
 module.exports = {
@@ -802,4 +886,9 @@ module.exports = {
   getStats,
   listParentCandidates,
   listProjects,
+  createUser,
+  getUserByEmail,
+  getUserById,
+  countUsers,
+  claimUnownedTodos,
 };

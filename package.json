@@ -14,7 +14,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",
+    "cookie-session": "^2.1.1",
     "express": "^5.2.1"
   },
   "devDependencies": {

@@ -15,6 +15,7 @@
 - 统计总数、进行中、已完成数量
 - 批量修改项目/到期日（页面内弹窗）
 - 导出/导入 JSON、撤销上一步（Undo）
+- 注册/登录（数据按账号隔离）
 - SQLite 持久化保存（重启容器后数据仍保留）
 
 ## 项目结构
@@ -36,6 +37,12 @@ npm run dev
 ```
 
 访问：`http://127.0.0.1:3000`（如 3000 端口被占用，可通过 `PORT=3100 npm run dev` 调整）
+
+建议设置会话密钥（避免重启导致会话失效）：
+
+```bash
+export SESSION_SECRET="your-strong-secret"
+```
 
 ## 自动化测试
 
@@ -84,6 +91,12 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 ## 已实现 API
 
 - `GET /api/health`
+- `POST /api/auth/register`
+  - `email: string`
+  - `password: string`（8-72 位）
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
 - `GET /api/todos?filter=all|active|completed&q=&project=&dueFrom=YYYY-MM-DD&dueTo=YYYY-MM-DD&sort=created_desc|created_asc|due_asc|due_desc&dueScope=all|overdue|today|week|no_due&page=1&pageSize=60`
   - 返回 `pagination`（分页信息）与 `dueSnapshot`（到期分布快照）
 - `GET /api/todos/meta`（返回项目列表、可选父任务、undo 可用状态）
