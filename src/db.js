@@ -88,6 +88,35 @@ const updateTodoStatusQuery = db.prepare(`
   WHERE id = @id
 `);
 
+const listTodoTreeIdsQuery = db.prepare(`
+  WITH RECURSIVE tree(id) AS (
+    SELECT id FROM todos WHERE id = @id
+    UNION ALL
+    SELECT child.id
+    FROM todos AS child
+    JOIN tree ON child.parent_id = tree.id
+  )
+  SELECT id FROM tree
+`);
+
+const deleteTodoByIdQuery = db.prepare(`
+  DELETE FROM todos
+  WHERE id = @id
+`);
+
+const deleteCompletedTodosQuery = db.prepare(`
+  DELETE FROM todos
+  WHERE completed = 1
+`);
+
+const clearOrphanParentsQuery = db.prepare(`
+  UPDATE todos
+  SET parent_id = NULL
+  WHERE
+    parent_id IS NOT NULL
+    AND parent_id NOT IN (SELECT id FROM todos)
+`);
+
 const countTodosQuery = db.prepare(`
   SELECT
     COUNT(*) AS total,
@@ -186,6 +215,43 @@ function toggleTodo(id) {
   return getTodo(id);
 }
 
+function deleteTodoTree(id) {
+  const ids = listTodoTreeIdsQuery
+    .all({ id })
+    .map((row) => Number(row.id))
+    .filter((todoId) => Number.isInteger(todoId) && todoId > 0);
+
+  if (!ids.length) {
+    return {
+      count: 0,
+      ids: [],
+    };
+  }
+
+  const removeTree = db.transaction((targetIds) => {
+    for (const targetId of targetIds) {
+      deleteTodoByIdQuery.run({ id: targetId });
+    }
+    clearOrphanParentsQuery.run();
+  });
+
+  removeTree(ids);
+  return {
+    count: ids.length,
+    ids,
+  };
+}
+
+function clearCompletedTodos() {
+  const clearCompleted = db.transaction(() => {
+    const deleted = deleteCompletedTodosQuery.run();
+    clearOrphanParentsQuery.run();
+    return Number(deleted.changes || 0);
+  });
+
+  return clearCompleted();
+}
+
 function getStats() {
   const row = countTodosQuery.get();
   return {
@@ -214,6 +280,8 @@ module.exports = {
   updateTodo,
   getTodo,
   toggleTodo,
+  deleteTodoTree,
+  clearCompletedTodos,
   getStats,
   listParentCandidates,
   listProjects,

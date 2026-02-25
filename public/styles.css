@@ -361,6 +361,19 @@ button {
   padding: 11px 14px;
 }
 
+.danger-button {
+  background: rgba(183, 61, 52, 0.1);
+  color: #9a2e28;
+  border: 1px solid rgba(183, 61, 52, 0.24);
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.danger-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .metrics-panel {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -402,6 +415,11 @@ button {
 .toolbar-controls {
   display: grid;
   gap: 8px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
 }
 
 .filters {
@@ -613,6 +631,15 @@ button {
 
 .todo-action:hover {
   background: rgba(234, 240, 255, 0.9);
+}
+
+.todo-action.is-danger {
+  border-color: rgba(183, 61, 52, 0.28);
+  color: #9a2e28;
+}
+
+.todo-action.is-danger:hover {
+  background: rgba(251, 232, 231, 0.95);
 }
 
 .empty {

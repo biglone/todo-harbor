@@ -36,6 +36,7 @@ const summaryHintEl = document.getElementById("summaryHint");
 const countAllEl = document.getElementById("countAll");
 const countActiveEl = document.getElementById("countActive");
 const countCompletedEl = document.getElementById("countCompleted");
+const clearCompletedButtonEl = document.getElementById("clearCompletedButton");
 
 const filterButtons = document.querySelectorAll(".filter");
 const viewModeButtons = document.querySelectorAll(".view-mode");
@@ -46,6 +47,10 @@ function setBusy(nextBusy) {
   state.busy = nextBusy;
   addButtonEl.disabled = nextBusy;
   resetComposerButtonEl.disabled = nextBusy;
+  if (clearCompletedButtonEl) {
+    const completedCount = Number(countCompletedEl.textContent || 0);
+    clearCompletedButtonEl.disabled = nextBusy || completedCount <= 0;
+  }
   for (const button of composeModeButtons) {
     button.disabled = nextBusy;
   }
@@ -319,6 +324,13 @@ function renderTodoNode(item, depth) {
   editButton.addEventListener("click", () => onEditTodo(item.id));
   actionsEl.appendChild(editButton);
 
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "todo-action is-danger";
+  deleteButton.textContent = "删除";
+  deleteButton.addEventListener("click", () => onDeleteTodo(item.id));
+  actionsEl.appendChild(deleteButton);
+
   metaEl.insertAdjacentElement("afterend", actionsEl);
 
   toggleButton.setAttribute("aria-label", item.completed ? "标记为未完成" : "标记为已完成");
@@ -456,9 +468,17 @@ function renderTodos(items) {
 }
 
 function renderStats(stats) {
-  countAllEl.textContent = String(stats.total || 0);
-  countActiveEl.textContent = String(stats.active || 0);
-  countCompletedEl.textContent = String(stats.completed || 0);
+  const total = Number(stats.total || 0);
+  const active = Number(stats.active || 0);
+  const completed = Number(stats.completed || 0);
+
+  countAllEl.textContent = String(total);
+  countActiveEl.textContent = String(active);
+  countCompletedEl.textContent = String(completed);
+
+  if (clearCompletedButtonEl) {
+    clearCompletedButtonEl.disabled = state.busy || completed <= 0;
+  }
 }
 
 function renderFilterButtons() {
@@ -748,6 +768,63 @@ async function onToggleTodo(id) {
   }
 }
 
+async function onDeleteTodo(id) {
+  const todo = getTodoById(id);
+  if (!todo) {
+    setMessage("任务不存在或已删除", true);
+    return;
+  }
+
+  const confirmed = window.confirm(`确认删除「${todo.title}」吗？子任务也会一起删除。`);
+  if (!confirmed) {
+    return;
+  }
+
+  setBusy(true);
+  setMessage("正在删除任务...");
+
+  try {
+    const result = await requestJSON(`/api/todos/${id}`, { method: "DELETE" });
+
+    if (state.editingTodoId && Array.isArray(result.ids) && result.ids.includes(state.editingTodoId)) {
+      exitEditMode({ resetFields: true });
+    }
+
+    await loadTodos({ silent: true });
+    setMessage(`删除成功，共删除 ${result.count || 0} 条`);
+  } catch (error) {
+    setMessage(error.message || "删除失败", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function onClearCompleted() {
+  const completedCount = Number(countCompletedEl.textContent || 0);
+  if (completedCount <= 0) {
+    setMessage("当前没有已完成任务可清理");
+    return;
+  }
+
+  const confirmed = window.confirm(`确认清理全部已完成任务吗？当前共 ${completedCount} 条。`);
+  if (!confirmed) {
+    return;
+  }
+
+  setBusy(true);
+  setMessage("正在清理已完成任务...");
+
+  try {
+    const result = await requestJSON("/api/todos/completed", { method: "DELETE" });
+    await loadTodos({ silent: true });
+    setMessage(`已清理 ${result.count || 0} 条已完成任务`);
+  } catch (error) {
+    setMessage(error.message || "清理失败", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 for (const button of filterButtons) {
   button.addEventListener("click", async () => {
     if (state.busy) {
@@ -816,6 +893,15 @@ resetComposerButtonEl.addEventListener("click", () => {
   resetComposerFields();
   setMessage("已清空当前输入");
 });
+
+if (clearCompletedButtonEl) {
+  clearCompletedButtonEl.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+    onClearCompleted();
+  });
+}
 
 todoFormEl.addEventListener("submit", onAddTodo);
 
