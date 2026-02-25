@@ -23,6 +23,18 @@ const state = {
   user: null,
 };
 
+function resolvePageMode(pathname) {
+  if (pathname === "/auth") {
+    return "auth";
+  }
+  if (pathname === "/settings") {
+    return "settings";
+  }
+  return "app";
+}
+
+const PAGE_MODE = resolvePageMode(window.location.pathname);
+
 const todoListEl = document.getElementById("todoList");
 const todoFormEl = document.getElementById("todoForm");
 const todoInputEl = document.getElementById("todoInput");
@@ -67,6 +79,9 @@ const dueSnapshotEl = document.getElementById("dueSnapshot");
 const listActionsEl = document.getElementById("listActions");
 const listProgressEl = document.getElementById("listProgress");
 const loadMoreButtonEl = document.getElementById("loadMoreButton");
+const composerPanelEl = document.getElementById("composerPanel");
+const metricsPanelEl = document.getElementById("metricsPanel");
+const boardPanelEl = document.getElementById("boardPanel");
 
 const authPanelEl = document.getElementById("authPanel");
 const authFormEl = document.getElementById("authForm");
@@ -84,6 +99,9 @@ const authModeButtons = document.querySelectorAll(".auth-mode");
 const userBarEl = document.getElementById("userBar");
 const userEmailEl = document.getElementById("userEmail");
 const logoutButtonEl = document.getElementById("logoutButton");
+const appNavLinkEl = document.getElementById("appNavLink");
+const settingsNavLinkEl = document.getElementById("settingsNavLink");
+const authNavLinkEl = document.getElementById("authNavLink");
 
 const resetToggleButtonEl = document.getElementById("resetToggleButton");
 const resetPanelEl = document.getElementById("resetPanel");
@@ -307,16 +325,50 @@ function updateAccountStatus(user) {
   }
 }
 
+function updateRouteNav(enabled) {
+  if (appNavLinkEl) {
+    appNavLinkEl.classList.toggle("is-active", PAGE_MODE === "app");
+    appNavLinkEl.classList.toggle("is-hidden", !enabled);
+  }
+  if (settingsNavLinkEl) {
+    settingsNavLinkEl.classList.toggle("is-active", PAGE_MODE === "settings");
+    settingsNavLinkEl.classList.toggle("is-hidden", !enabled);
+  }
+  if (authNavLinkEl) {
+    authNavLinkEl.classList.toggle("is-active", PAGE_MODE === "auth");
+    authNavLinkEl.classList.toggle("is-hidden", enabled);
+  }
+}
+
+function updateRoutePanels(enabled) {
+  const showAuth = PAGE_MODE === "auth" && !enabled;
+  const showAccount = PAGE_MODE === "settings" && enabled;
+  const showApp = PAGE_MODE === "app" && enabled;
+
+  if (authPanelEl) {
+    authPanelEl.classList.toggle("is-hidden", !showAuth);
+  }
+  if (accountPanelEl) {
+    accountPanelEl.classList.toggle("is-hidden", !showAccount);
+  }
+  if (composerPanelEl) {
+    composerPanelEl.classList.toggle("is-hidden", !showApp);
+  }
+  if (metricsPanelEl) {
+    metricsPanelEl.classList.toggle("is-hidden", !showApp);
+  }
+  if (boardPanelEl) {
+    boardPanelEl.classList.toggle("is-hidden", !showApp);
+  }
+}
+
 function setAccessEnabled(enabled, user = null) {
   state.accessEnabled = enabled;
   state.user = user;
 
-  if (authPanelEl) {
-    authPanelEl.classList.toggle("is-hidden", enabled);
-  }
-  if (accountPanelEl) {
-    accountPanelEl.classList.toggle("is-hidden", !enabled);
-  }
+  updateRoutePanels(enabled);
+  updateRouteNav(enabled);
+
   if (userBarEl) {
     userBarEl.classList.toggle("is-hidden", !enabled);
   }
@@ -1199,15 +1251,36 @@ async function bootstrapAuth() {
   try {
     const me = await requestJSON("/api/auth/me");
     setAccessEnabled(true, me);
-    if (requiresEmailVerification(me) && !me.emailVerified) {
-      setEmailVerificationRequiredHint();
+
+    if (PAGE_MODE === "auth") {
+      window.location.replace("/app");
       return;
     }
+
+    if (requiresEmailVerification(me) && !me.emailVerified) {
+      setEmailVerificationRequiredHint();
+      if (PAGE_MODE !== "settings") {
+        window.location.replace("/settings");
+      }
+      return;
+    }
+
     setSyncStatus("已连接");
-    await loadTodos({ silent: true });
+    if (PAGE_MODE === "app") {
+      await loadTodos({ silent: true });
+      return;
+    }
+
+    if (PAGE_MODE === "settings") {
+      setAccountMessage("已登录，可在此管理账号");
+    }
   } catch (error) {
     setAccessEnabled(false, null);
     setSyncStatus("未登录", true);
+    if (PAGE_MODE !== "auth") {
+      window.location.replace("/auth");
+      return;
+    }
     setMessage("请登录后使用", true);
   } finally {
     setAuthBusy(false);
@@ -1248,7 +1321,9 @@ async function applyAuthTokensFromURL() {
           setEmailVerificationRequiredHint();
         } else {
           setSyncStatus("已连接");
-          await loadTodos({ silent: true });
+          if (PAGE_MODE === "app") {
+            await loadTodos({ silent: true });
+          }
         }
       } else {
         setAuthMessage("邮箱验证成功，请登录");
@@ -1658,10 +1733,18 @@ async function onAuthSubmit(event) {
     if (requiresEmailVerification(user) && !user.emailVerified) {
       setEmailVerificationRequiredHint();
       setMessage("登录成功，请先验证邮箱", true);
+      if (PAGE_MODE !== "settings") {
+        window.location.assign("/settings");
+      }
       return;
     }
 
     setSyncStatus("已连接");
+    if (PAGE_MODE !== "app") {
+      window.location.assign("/app");
+      return;
+    }
+
     setMessage("登录成功");
     await loadTodos({ silent: true });
   } catch (error) {
@@ -1677,6 +1760,10 @@ async function onLogout() {
     await requestJSON("/api/auth/logout", { method: "POST" });
     setAccessEnabled(false, null);
     setSyncStatus("未登录", true);
+    if (PAGE_MODE !== "auth") {
+      window.location.assign("/auth");
+      return;
+    }
     setMessage("已退出登录");
   } catch (error) {
     setMessage(error.message || "退出失败", true);
@@ -1732,7 +1819,9 @@ async function onVerifyEmail() {
       return;
     }
     setSyncStatus("已连接");
-    await loadTodos({ silent: true });
+    if (PAGE_MODE === "app") {
+      await loadTodos({ silent: true });
+    }
   } catch (error) {
     setAccountMessage(error.message || "验证失败", true);
   }

@@ -60,6 +60,8 @@ const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
 const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+const PUBLIC_DIR = path.join(__dirname, "..", "public");
+const PUBLIC_INDEX_FILE = path.join(PUBLIC_DIR, "index.html");
 
 let mailTransporter = null;
 
@@ -193,7 +195,7 @@ async function sendEmail({ to, subject, text, html }) {
 }
 
 function buildVerifyEmail(email, token) {
-  const verifyUrl = `${APP_BASE_URL}/?verify_token=${encodeURIComponent(token)}`;
+  const verifyUrl = `${APP_BASE_URL}/auth?verify_token=${encodeURIComponent(token)}`;
   const subject = "Todo Harbor 邮箱验证";
   const text = `你好，\\n\\n你的邮箱验证码是：${token}\\n\\n也可以点击链接完成验证：${verifyUrl}\\n\\n如果不是你本人操作，请忽略此邮件。`;
   const html = `\n    <p>你好，</p>\n    <p>你的邮箱验证码是：<strong>${token}</strong></p>\n    <p>也可以点击链接完成验证：<a href=\"${verifyUrl}\">${verifyUrl}</a></p>\n    <p>如果不是你本人操作，请忽略此邮件。</p>\n  `;
@@ -208,7 +210,7 @@ function buildRegisterCodeEmail(email, code) {
 }
 
 function buildResetEmail(email, token) {
-  const resetUrl = `${APP_BASE_URL}/?reset_token=${encodeURIComponent(token)}`;
+  const resetUrl = `${APP_BASE_URL}/auth?reset_token=${encodeURIComponent(token)}`;
   const subject = "Todo Harbor 密码重置";
   const text = `你好，\\n\\n你的密码重置码是：${token}\\n\\n也可以点击链接打开页面：${resetUrl}\\n\\n如果不是你本人操作，请忽略此邮件。`;
   const html = `\n    <p>你好，</p>\n    <p>你的密码重置码是：<strong>${token}</strong></p>\n    <p>也可以点击链接打开页面：<a href=\"${resetUrl}\">${resetUrl}</a></p>\n    <p>如果不是你本人操作，请忽略此邮件。</p>\n  `;
@@ -265,6 +267,37 @@ function requireVerified(req, res, next) {
   }
 
   return next();
+}
+
+function getSessionUser(req) {
+  const userId = Number(req.session?.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+
+  const user = getUserById(userId);
+  if (!user) {
+    req.session = null;
+    return null;
+  }
+
+  return user;
+}
+
+function buildAuthQuerySuffix(req) {
+  const params = new URLSearchParams();
+  const verifyToken = String(req.query?.verify_token || "").trim();
+  const resetToken = String(req.query?.reset_token || "").trim();
+
+  if (verifyToken) {
+    params.set("verify_token", verifyToken);
+  }
+  if (resetToken) {
+    params.set("reset_token", resetToken);
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 app.post("/api/auth/register/code/request", async (req, res) => {
@@ -1072,7 +1105,36 @@ app.patch("/api/todos/:id/toggle", (req, res) => {
   return res.json(todo);
 });
 
-app.use(express.static(path.join(__dirname, "..", "public")));
+app.get("/", (req, res) => {
+  const user = getSessionUser(req);
+  return res.redirect(user ? "/app" : "/auth");
+});
+
+app.get("/auth", (req, res) => {
+  const user = getSessionUser(req);
+  if (user) {
+    return res.redirect(`/app${buildAuthQuerySuffix(req)}`);
+  }
+  return res.sendFile(PUBLIC_INDEX_FILE);
+});
+
+app.get("/app", (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) {
+    return res.redirect(`/auth${buildAuthQuerySuffix(req)}`);
+  }
+  return res.sendFile(PUBLIC_INDEX_FILE);
+});
+
+app.get("/settings", (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) {
+    return res.redirect(`/auth${buildAuthQuerySuffix(req)}`);
+  }
+  return res.sendFile(PUBLIC_INDEX_FILE);
+});
+
+app.use(express.static(PUBLIC_DIR));
 
 app.use((err, req, res, _next) => {
   console.error(

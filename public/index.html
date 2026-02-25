@@ -25,6 +25,11 @@
         </div>
         <div class="topbar-actions">
           <span class="status-pill" id="syncStatus">已连接</span>
+          <nav class="route-nav" aria-label="主导航">
+            <a id="appNavLink" class="route-link" href="/app">代办</a>
+            <a id="settingsNavLink" class="route-link" href="/settings">账号设置</a>
+            <a id="authNavLink" class="route-link" href="/auth">登录/注册</a>
+          </nav>
           <div class="user-bar is-hidden" id="userBar">
             <span id="userEmail"></span>
             <button id="logoutButton" class="secondary-button compact-button" type="button">退出登录</button>
@@ -148,7 +153,7 @@
         <p id="accountMessage" class="account-message"></p>
       </section>
 
-      <section class="panel composer-panel" aria-label="创建待办">
+      <section class="panel composer-panel" id="composerPanel" aria-label="创建待办">
         <div class="composer-head">
           <div>
             <p class="composer-kicker">新增任务</p>
@@ -250,7 +255,7 @@
         </form>
       </section>
 
-      <section class="panel metrics-panel" aria-label="统计数据">
+      <section class="panel metrics-panel" id="metricsPanel" aria-label="统计数据">
         <article class="metric-card">
           <p>全部</p>
           <strong id="countAll">0</strong>
@@ -265,7 +270,7 @@
         </article>
       </section>
 
-      <section class="panel board-panel">
+      <section class="panel board-panel" id="boardPanel">
         <div class="board-toolbar">
           <div class="toolbar-controls">
             <div class="filters" role="tablist" aria-label="筛选代办">

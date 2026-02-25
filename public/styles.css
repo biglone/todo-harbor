@@ -18,6 +18,10 @@
   box-sizing: border-box;
 }
 
+.is-hidden {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -73,6 +77,32 @@ body {
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
+}
+
+.route-nav {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.route-link {
+  border: 1px solid rgba(33, 54, 94, 0.18);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  color: #28406f;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.route-link:hover {
+  background: rgba(234, 240, 255, 0.95);
+}
+
+.route-link.is-active {
+  background: linear-gradient(140deg, #0f7f74, #0f5c9f);
+  color: #fff;
+  border-color: rgba(15, 102, 120, 0.56);
 }
 
 .user-bar {
@@ -1097,6 +1127,10 @@ button {
 
   .topbar-actions {
     align-items: flex-start;
+  }
+
+  .route-nav {
+    flex-wrap: wrap;
   }
 
   .composer-head {

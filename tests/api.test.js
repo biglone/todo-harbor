@@ -299,6 +299,38 @@ describe("Todos API", () => {
     assert.equal(me.body.emailVerified, true);
   });
 
+  test("page routes are guarded by session", async () => {
+    const request = createTestRequest();
+
+    const rootGuest = await request.get("/");
+    assert.equal(rootGuest.status, 302);
+    assert.equal(rootGuest.headers.location, "/auth");
+
+    const appGuest = await request.get("/app");
+    assert.equal(appGuest.status, 302);
+    assert.equal(appGuest.headers.location, "/auth");
+
+    const settingsGuest = await request.get("/settings");
+    assert.equal(settingsGuest.status, 302);
+    assert.equal(settingsGuest.headers.location, "/auth");
+
+    await registerAndLogin(request);
+
+    const rootAuthed = await request.get("/");
+    assert.equal(rootAuthed.status, 302);
+    assert.equal(rootAuthed.headers.location, "/app");
+
+    const authAuthed = await request.get("/auth");
+    assert.equal(authAuthed.status, 302);
+    assert.equal(authAuthed.headers.location, "/app");
+
+    const appAuthed = await request.get("/app");
+    assert.equal(appAuthed.status, 200);
+
+    const settingsAuthed = await request.get("/settings");
+    assert.equal(settingsAuthed.status, 200);
+  });
+
   test("password reset flow", async () => {
     const request = createTestRequest();
     const user = await registerAndLogin(request);
