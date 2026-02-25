@@ -9,11 +9,3 @@ services:
       - "18080:3000"
     volumes:
       - ./data:/app/data
-
-  cloudflared:
-    image: cloudflare/cloudflared:2025.11.1
-    container_name: todo-harbor-tunnel
-    restart: unless-stopped
-    depends_on:
-      - app
-    command: tunnel --no-autoupdate --url http://app:3000

@@ -1,7 +1,7 @@
 # Todo Harbor
 
 一个支持历史记录与完成状态持久化的待办事项网站。  
-技术架构：`Node.js + Express + SQLite + Docker + cloudflared`。
+技术架构：`Node.js + Express + SQLite + Docker + Cloudflare Tunnel`。
 
 ## 功能
 
@@ -31,7 +31,7 @@ npm run dev
 
 访问：`http://127.0.0.1:3000`（如 3000 端口被占用，可通过 `PORT=3100 npm run dev` 调整）
 
-## Docker 部署（推荐）
+## Docker 部署（推荐，仅应用容器）
 
 ```bash
 docker compose up -d --build
@@ -46,19 +46,26 @@ docker compose up -d --build
 docker compose down
 ```
 
-## 公网访问（cloudflared quick tunnel）
+## 公网访问（named cloudflared tunnel）
 
-`docker-compose.yml` 已内置 `cloudflared` 服务，会自动创建 quick tunnel。  
-查看公网地址：
+当前设备已创建 named tunnel（常驻 systemd）：
+
+- tunnel name: `todo-harbor-20260225`
+- domain: `todo-harbor-20260225.biglone.tech`
+- service: `http://127.0.0.1:18080`
+- systemd service: `cloudflared-todo-harbor-20260225.service`
+
+验证公网访问：
 
 ```bash
-docker compose logs cloudflared
+curl -I https://todo-harbor-20260225.biglone.tech
 ```
 
-日志里会出现：
+查看 tunnel 服务状态：
 
-```text
-https://xxxxx.trycloudflare.com
+```bash
+systemctl status cloudflared-todo-harbor-20260225.service
+journalctl -u cloudflared-todo-harbor-20260225.service -f
 ```
 
 ## 已实现 API
