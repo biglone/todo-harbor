@@ -150,6 +150,30 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - 本地/开发模式下，验证与重置码会直接返回在响应中并打印到日志，便于测试。
 - 生产环境建议接入邮件服务，隐藏验证码输出。
 
+## 邮件发送（SMTP）
+
+生产环境请配置以下环境变量以发送验证码邮件：
+
+- `SMTP_HOST`（例如 `smtp.gmail.com`）
+- `SMTP_PORT`（465 或 587）
+- `SMTP_SECURE`（端口 465 通常为 `true`，587 为 `false`）
+- `SMTP_USER`（邮箱账号）
+- `SMTP_PASS`（邮箱 App Password）
+- `SMTP_FROM`（发件人地址，可与 `SMTP_USER` 相同）
+- `APP_BASE_URL`（生成邮件中的验证/重置链接，例如 `https://todo-harbor.example.com`）
+
+Gmail 示例：
+
+```bash
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT=465
+export SMTP_SECURE=true
+export SMTP_USER="yourname@gmail.com"
+export SMTP_PASS="your-app-password"
+export SMTP_FROM="yourname@gmail.com"
+export APP_BASE_URL="https://todo-harbor.example.com"
+```
+
 ## 发布与回滚
 
 发布（Docker Compose）：

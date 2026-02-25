@@ -1160,6 +1160,61 @@ async function bootstrapAuth() {
   }
 }
 
+async function applyAuthTokensFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const verifyToken = params.get("verify_token");
+  const resetToken = params.get("reset_token");
+  let touched = false;
+
+  if (resetToken && resetTokenEl) {
+    resetTokenEl.value = resetToken;
+    if (resetPanelEl) {
+      resetPanelEl.classList.remove("is-hidden");
+    }
+    setResetMessage("已从邮件链接填入重置码");
+    touched = true;
+  }
+
+  if (verifyToken && verifyTokenInputEl) {
+    verifyTokenInputEl.value = verifyToken;
+    touched = true;
+  }
+
+  if (verifyToken) {
+    try {
+      await requestJSON("/api/auth/verify", {
+        method: "POST",
+        body: JSON.stringify({ token: verifyToken }),
+      });
+      if (state.accessEnabled) {
+        setAccountMessage("邮箱验证成功");
+        const me = await requestJSON("/api/auth/me");
+        setAccessEnabled(true, me);
+      } else {
+        setAuthMessage("邮箱验证成功，请登录");
+      }
+    } catch (error) {
+      if (state.accessEnabled) {
+        setAccountMessage(error.message || "邮箱验证失败", true);
+      } else {
+        setAuthMessage(error.message || "邮箱验证失败");
+      }
+    }
+  }
+
+  if (touched) {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete("verify_token");
+    nextUrl.searchParams.delete("reset_token");
+    history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+  }
+}
+
+async function bootstrapApp() {
+  await bootstrapAuth();
+  await applyAuthTokensFromURL();
+}
+
 function resetComposerFields() {
   todoInputEl.value = "";
   todoBatchInputEl.value = "";
@@ -2190,4 +2245,4 @@ todoFormEl.addEventListener("submit", onAddTodo);
 setComposeMode("single");
 setAuthMode("login");
 setAccessEnabled(false, null);
-bootstrapAuth();
+bootstrapApp();

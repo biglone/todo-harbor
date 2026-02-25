@@ -3,6 +3,7 @@ const express = require("express");
 const cookieSession = require("cookie-session");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const {
   listTodos,
   createTodo,
@@ -46,6 +47,17 @@ const VERIFY_TOKEN_TTL_MINUTES = Number(process.env.VERIFY_TOKEN_TTL_MINUTES || 
 const RESET_TOKEN_TTL_MINUTES = Number(process.env.RESET_TOKEN_TTL_MINUTES || 30);
 const REQUIRE_EMAIL_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === "1";
 const INCLUDE_TOKENS_IN_RESPONSE = process.env.NODE_ENV !== "production";
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
+const SMTP_SECURE = process.env.SMTP_SECURE
+  ? process.env.SMTP_SECURE === "true"
+  : SMTP_PORT === 465;
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
+const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+
+let mailTransporter = null;
 
 const app = express();
 
@@ -119,6 +131,73 @@ function isTokenExpired(expiresAt) {
   return Date.parse(expiresAt) <= Date.now();
 }
 
+function getMailer() {
+  if (!SMTP_USER || !SMTP_PASS) {
+    return null;
+  }
+
+  if (mailTransporter) {
+    return mailTransporter;
+  }
+
+  const host = SMTP_HOST || "smtp.gmail.com";
+  mailTransporter = nodemailer.createTransport({
+    host,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+
+  return mailTransporter;
+}
+
+async function sendEmail({ to, subject, text, html }) {
+  const transporter = getMailer();
+  if (!transporter || !SMTP_FROM) {
+    return { sent: false, reason: "not_configured" };
+  }
+
+  try {
+    await transporter.sendMail({
+      from: SMTP_FROM,
+      to,
+      subject,
+      text,
+      html,
+    });
+    return { sent: true };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        type: "mail_error",
+        timestamp: new Date().toISOString(),
+        message: error?.message || "Email send failed",
+      }),
+    );
+    return { sent: false, reason: "error" };
+  }
+}
+
+function buildVerifyEmail(email, token) {
+  const verifyUrl = `${APP_BASE_URL}/?verify_token=${encodeURIComponent(token)}`;
+  const subject = "Todo Harbor 邮箱验证";
+  const text = `你好，\\n\\n你的邮箱验证码是：${token}\\n\\n也可以点击链接完成验证：${verifyUrl}\\n\\n如果不是你本人操作，请忽略此邮件。`;
+  const html = `\n    <p>你好，</p>\n    <p>你的邮箱验证码是：<strong>${token}</strong></p>\n    <p>也可以点击链接完成验证：<a href=\"${verifyUrl}\">${verifyUrl}</a></p>\n    <p>如果不是你本人操作，请忽略此邮件。</p>\n  `;
+  return { to: email, subject, text, html };
+}
+
+function buildResetEmail(email, token) {
+  const resetUrl = `${APP_BASE_URL}/?reset_token=${encodeURIComponent(token)}`;
+  const subject = "Todo Harbor 密码重置";
+  const text = `你好，\\n\\n你的密码重置码是：${token}\\n\\n也可以点击链接打开页面：${resetUrl}\\n\\n如果不是你本人操作，请忽略此邮件。`;
+  const html = `\n    <p>你好，</p>\n    <p>你的密码重置码是：<strong>${token}</strong></p>\n    <p>也可以点击链接打开页面：<a href=\"${resetUrl}\">${resetUrl}</a></p>\n    <p>如果不是你本人操作，请忽略此邮件。</p>\n  `;
+  return { to: email, subject, text, html };
+}
+
 function issueVerificationToken(userId) {
   const token = generateToken();
   const tokenHash = hashToken(token);
@@ -163,7 +242,7 @@ function requireVerified(req, res, next) {
   return next();
 }
 
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
 
@@ -192,6 +271,7 @@ app.post("/api/auth/register", (req, res) => {
   if (INCLUDE_TOKENS_IN_RESPONSE) {
     console.log(`Verify token for ${user.email}: ${verification.token}`);
   }
+  await sendEmail(buildVerifyEmail(user.email, verification.token));
 
   req.session.userId = user.id;
   req.session.email = user.email;
@@ -248,7 +328,7 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
   });
 });
 
-app.post("/api/auth/verification/request", requireAuth, (req, res) => {
+app.post("/api/auth/verification/request", requireAuth, async (req, res) => {
   if (req.user.email_verified) {
     return res.json({ emailVerified: true });
   }
@@ -257,6 +337,7 @@ app.post("/api/auth/verification/request", requireAuth, (req, res) => {
   if (INCLUDE_TOKENS_IN_RESPONSE) {
     console.log(`Verify token for ${req.user.email}: ${verification.token}`);
   }
+  await sendEmail(buildVerifyEmail(req.user.email, verification.token));
 
   return res.json({
     emailVerified: false,
@@ -285,7 +366,7 @@ app.post("/api/auth/verify", (req, res) => {
   return res.json({ ok: true });
 });
 
-app.post("/api/auth/password/forgot", (req, res) => {
+app.post("/api/auth/password/forgot", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: "email is invalid" });
@@ -300,6 +381,7 @@ app.post("/api/auth/password/forgot", (req, res) => {
   if (INCLUDE_TOKENS_IN_RESPONSE) {
     console.log(`Reset token for ${user.email}: ${reset.token}`);
   }
+  await sendEmail(buildResetEmail(user.email, reset.token));
 
   return res.json({
     ok: true,
@@ -346,7 +428,7 @@ app.get("/api/account", requireAuth, (req, res) => {
   });
 });
 
-app.post("/api/account/email", requireAuth, (req, res) => {
+app.post("/api/account/email", requireAuth, async (req, res) => {
   const nextEmail = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
 
@@ -375,6 +457,7 @@ app.post("/api/account/email", requireAuth, (req, res) => {
   if (INCLUDE_TOKENS_IN_RESPONSE) {
     console.log(`Verify token for ${updated.email}: ${verification.token}`);
   }
+  await sendEmail(buildVerifyEmail(updated.email, verification.token));
 
   return res.json({
     id: updated.id,
