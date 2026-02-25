@@ -27,46 +27,102 @@
       </header>
 
       <section class="panel composer-panel" aria-label="创建待办">
+        <div class="composer-head">
+          <div>
+            <p class="composer-kicker">新增任务</p>
+            <h2>结构化录入区</h2>
+            <p class="composer-note">支持单条创建、按日期批量创建、挂载父任务形成层级。</p>
+          </div>
+          <div class="compose-modes" role="tablist" aria-label="新增模式">
+            <button class="compose-mode is-active" data-compose-mode="single" role="tab" aria-selected="true">
+              单条录入
+            </button>
+            <button class="compose-mode" data-compose-mode="batch" role="tab" aria-selected="false">
+              批量录入
+            </button>
+          </div>
+        </div>
+
         <form id="todoForm" class="composer-form">
-          <div class="composer-main">
-            <label class="sr-only" for="todoInput">输入待办事项</label>
-            <input
-              id="todoInput"
-              name="title"
-              type="text"
-              maxlength="200"
-              placeholder="比如：整理本周项目周报"
-              autocomplete="off"
-              required
-            />
-            <button type="submit" id="addButton">新增待办</button>
+          <div class="composer-grid">
+            <div class="composer-left">
+              <label class="field" for="todoInput" id="singleInputField">
+                <span>任务标题</span>
+                <input
+                  id="todoInput"
+                  name="title"
+                  type="text"
+                  maxlength="200"
+                  placeholder="比如：整理本周项目周报"
+                  autocomplete="off"
+                />
+              </label>
+
+              <label class="field is-hidden" for="todoBatchInput" id="batchInputField">
+                <span>批量任务（每行一条）</span>
+                <textarea
+                  id="todoBatchInput"
+                  name="titles"
+                  rows="5"
+                  placeholder="例如：&#10;完成接口联调&#10;补充回归测试&#10;更新发布文档"
+                ></textarea>
+                <small>批量模式会按当前项目、日期、父任务统一创建。</small>
+              </label>
+
+              <div class="composer-extra">
+                <label class="field" for="projectInput">
+                  <span>项目</span>
+                  <input
+                    id="projectInput"
+                    name="project"
+                    type="text"
+                    maxlength="80"
+                    list="projectSuggestions"
+                    value="默认项目"
+                    placeholder="如：订单中心"
+                  />
+                </label>
+
+                <label class="field" for="dueDateInput">
+                  <span>任务日期</span>
+                  <input id="dueDateInput" name="dueDate" type="date" />
+                </label>
+
+                <label class="field" for="parentSelect">
+                  <span>父任务</span>
+                  <select id="parentSelect" name="parentId">
+                    <option value="">顶级任务（无父级）</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="composer-helpers">
+                <div class="quick-dates" aria-label="快捷日期">
+                  <button type="button" class="quick-date" data-days-offset="0">今天</button>
+                  <button type="button" class="quick-date" data-days-offset="1">明天</button>
+                  <button type="button" class="quick-date" data-days-offset="7">一周后</button>
+                  <button type="button" class="quick-date" data-clear-date="true">清除日期</button>
+                </div>
+                <div id="projectChips" class="project-chips" aria-label="历史项目快捷选择"></div>
+              </div>
+            </div>
+
+            <aside class="composer-summary" aria-live="polite">
+              <h3>创建预览</h3>
+              <dl>
+                <div><dt>模式</dt><dd id="summaryMode">单条录入</dd></div>
+                <div><dt>预计创建</dt><dd id="summaryCount">1 条</dd></div>
+                <div><dt>项目</dt><dd id="summaryProject">默认项目</dd></div>
+                <div><dt>日期</dt><dd id="summaryDate">未设置日期</dd></div>
+                <div><dt>父任务</dt><dd id="summaryParent">顶级任务</dd></div>
+              </dl>
+              <p id="summaryHint">单条模式会创建 1 条任务。</p>
+            </aside>
           </div>
 
-          <div class="composer-extra">
-            <label class="field" for="projectInput">
-              <span>项目</span>
-              <input
-                id="projectInput"
-                name="project"
-                type="text"
-                maxlength="80"
-                list="projectSuggestions"
-                value="默认项目"
-                placeholder="如：订单中心"
-              />
-            </label>
-
-            <label class="field" for="dueDateInput">
-              <span>任务日期</span>
-              <input id="dueDateInput" name="dueDate" type="date" />
-            </label>
-
-            <label class="field" for="parentSelect">
-              <span>父任务</span>
-              <select id="parentSelect" name="parentId">
-                <option value="">顶级任务（无父级）</option>
-              </select>
-            </label>
+          <div class="composer-actions">
+            <button type="submit" id="addButton">新增待办</button>
+            <button type="button" id="resetComposerButton" class="secondary-button">清空输入</button>
           </div>
           <datalist id="projectSuggestions"></datalist>
         </form>

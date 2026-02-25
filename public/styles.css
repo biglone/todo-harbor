@@ -121,26 +121,84 @@ h1 {
   padding: 16px;
 }
 
+.composer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.composer-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #0f6f66;
+}
+
+.composer-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.composer-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.compose-modes {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compose-mode {
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  background: #ebf0ff;
+  color: #2a3c6b;
+}
+
+.compose-mode.is-active {
+  background: linear-gradient(140deg, #0f7f74, #0f5c9f);
+  color: #fff;
+}
+
 .composer-form {
   display: grid;
   gap: 12px;
 }
 
-.composer-main {
+.composer-grid {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
+  grid-template-columns: 2fr 1fr;
+  gap: 14px;
 }
 
 input[type="text"],
 input,
-select {
+select,
+textarea {
   border: 1px solid rgba(33, 54, 94, 0.18);
   border-radius: 12px;
   font: inherit;
   padding: 12px 14px;
   background: #fff;
   color: var(--text);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 118px;
+}
+
+.composer-left {
+  display: grid;
+  gap: 10px;
 }
 
 .composer-extra {
@@ -160,8 +218,61 @@ select {
   font-weight: 600;
 }
 
+.field small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.field.is-hidden {
+  display: none;
+}
+
+.composer-helpers {
+  display: grid;
+  gap: 10px;
+}
+
+.quick-dates {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-date {
+  padding: 7px 10px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #234372;
+}
+
+.project-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.project-chip {
+  padding: 7px 11px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  background: #fff3e7;
+  color: #58341e;
+}
+
+.project-chip.is-active {
+  background: linear-gradient(130deg, #f26d4b, #cb4d39);
+  color: #fff;
+}
+
+.chips-placeholder {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 button:focus-visible {
   outline: 3px solid rgba(10, 127, 116, 0.25);
   outline-offset: 2px;
@@ -175,16 +286,72 @@ button {
   cursor: pointer;
 }
 
+.composer-summary {
+  border: 1px solid rgba(33, 54, 94, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 12px;
+}
+
+.composer-summary h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.composer-summary dl {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 8px;
+}
+
+.composer-summary dl div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.composer-summary dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.composer-summary dd {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+#summaryHint {
+  margin: 10px 0 0;
+  font-size: 0.79rem;
+  color: var(--muted);
+}
+
+.composer-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 #addButton {
   background: linear-gradient(130deg, var(--accent), #0a6476);
   color: #fff;
-  padding: 12px 18px;
-  min-width: 114px;
+  padding: 11px 16px;
+  min-width: 120px;
 }
 
 #addButton:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.secondary-button {
+  background: rgba(255, 255, 255, 0.94);
+  color: #2c3d6c;
+  border: 1px solid rgba(33, 54, 94, 0.18);
+  padding: 11px 14px;
 }
 
 .metrics-panel {
@@ -454,11 +621,16 @@ button {
     gap: 8px;
   }
 
-  .composer-form {
+  .composer-head {
+    flex-direction: column;
     gap: 10px;
   }
 
-  .composer-main {
+  .compose-modes {
+    width: 100%;
+  }
+
+  .composer-grid {
     grid-template-columns: 1fr;
   }
 
@@ -466,7 +638,16 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .composer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   #addButton {
+    width: 100%;
+  }
+
+  .secondary-button {
     width: 100%;
   }
 

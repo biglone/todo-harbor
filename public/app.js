@@ -1,31 +1,56 @@
 const state = {
   filter: "all",
   viewMode: "flat",
+  composeMode: "single",
   busy: false,
   items: [],
+  projects: [],
+  parents: [],
 };
 
 const todoListEl = document.getElementById("todoList");
 const todoFormEl = document.getElementById("todoForm");
 const todoInputEl = document.getElementById("todoInput");
+const todoBatchInputEl = document.getElementById("todoBatchInput");
+const singleInputFieldEl = document.getElementById("singleInputField");
+const batchInputFieldEl = document.getElementById("batchInputField");
 const projectInputEl = document.getElementById("projectInput");
 const dueDateInputEl = document.getElementById("dueDateInput");
 const parentSelectEl = document.getElementById("parentSelect");
 const projectSuggestionsEl = document.getElementById("projectSuggestions");
+const projectChipsEl = document.getElementById("projectChips");
 const addButtonEl = document.getElementById("addButton");
+const resetComposerButtonEl = document.getElementById("resetComposerButton");
 const messageBarEl = document.getElementById("messageBar");
 const syncStatusEl = document.getElementById("syncStatus");
 const templateEl = document.getElementById("todoTemplate");
 
+const summaryModeEl = document.getElementById("summaryMode");
+const summaryCountEl = document.getElementById("summaryCount");
+const summaryProjectEl = document.getElementById("summaryProject");
+const summaryDateEl = document.getElementById("summaryDate");
+const summaryParentEl = document.getElementById("summaryParent");
+const summaryHintEl = document.getElementById("summaryHint");
+
 const countAllEl = document.getElementById("countAll");
 const countActiveEl = document.getElementById("countActive");
 const countCompletedEl = document.getElementById("countCompleted");
+
 const filterButtons = document.querySelectorAll(".filter");
 const viewModeButtons = document.querySelectorAll(".view-mode");
+const composeModeButtons = document.querySelectorAll(".compose-mode");
+const quickDateButtons = document.querySelectorAll(".quick-date");
 
 function setBusy(nextBusy) {
   state.busy = nextBusy;
   addButtonEl.disabled = nextBusy;
+  resetComposerButtonEl.disabled = nextBusy;
+  for (const button of composeModeButtons) {
+    button.disabled = nextBusy;
+  }
+  for (const button of quickDateButtons) {
+    button.disabled = nextBusy;
+  }
 }
 
 function setMessage(text, isError = false) {
@@ -74,6 +99,67 @@ function formatDateOnly(value) {
   return new Intl.DateTimeFormat("zh-CN", {
     dateStyle: "medium",
   }).format(date);
+}
+
+function formatDateForInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getBatchTitles() {
+  return String(todoBatchInputEl.value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function updateComposerSummary() {
+  const project = projectInputEl.value.trim() || "默认项目";
+  const dueDate = dueDateInputEl.value;
+  const parentText = parentSelectEl.value
+    ? parentSelectEl.options[parentSelectEl.selectedIndex]?.textContent || "顶级任务"
+    : "顶级任务";
+
+  const isBatch = state.composeMode === "batch";
+  const batchTitles = isBatch ? getBatchTitles() : [];
+  const plannedCount = isBatch ? batchTitles.length : 1;
+
+  summaryModeEl.textContent = isBatch ? "批量录入" : "单条录入";
+  summaryCountEl.textContent = `${plannedCount} 条`;
+  summaryProjectEl.textContent = project;
+  summaryDateEl.textContent = dueDate ? formatDateOnly(dueDate) : "未设置日期";
+  summaryParentEl.textContent = parentText;
+
+  if (isBatch) {
+    summaryHintEl.textContent =
+      batchTitles.length > 0
+        ? `批量模式将一次创建 ${batchTitles.length} 条任务。`
+        : "批量模式下请在文本框中每行输入一条任务。";
+  } else {
+    summaryHintEl.textContent = "单条模式会创建 1 条任务。";
+  }
+}
+
+function renderComposeModeButtons() {
+  for (const button of composeModeButtons) {
+    const selected = button.dataset.composeMode === state.composeMode;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+}
+
+function setComposeMode(mode) {
+  state.composeMode = mode === "batch" ? "batch" : "single";
+
+  const isBatch = state.composeMode === "batch";
+  singleInputFieldEl.classList.toggle("is-hidden", isBatch);
+  batchInputFieldEl.classList.toggle("is-hidden", !isBatch);
+  addButtonEl.textContent = isBatch ? "批量新增" : "新增待办";
+
+  renderComposeModeButtons();
+  updateComposerSummary();
 }
 
 function buildTodoTree(items) {
@@ -150,11 +236,7 @@ function renderTodoNode(item, depth) {
     ? `创建于 ${formatDateTime(item.created_at)} · 完成于 ${formatDateTime(item.completed_at)}`
     : `创建于 ${formatDateTime(item.created_at)}`;
 
-  toggleButton.setAttribute(
-    "aria-label",
-    item.completed ? "标记为未完成" : "标记为已完成",
-  );
-
+  toggleButton.setAttribute("aria-label", item.completed ? "标记为未完成" : "标记为已完成");
   toggleButton.addEventListener("click", () => onToggleTodo(item.id));
   return node;
 }
@@ -164,6 +246,7 @@ function renderTodoTree(container, nodes, depth, visited) {
     if (visited.has(node.id)) {
       continue;
     }
+
     visited.add(node.id);
     container.appendChild(renderTodoNode(node, depth));
 
@@ -318,6 +401,40 @@ function renderProjectSuggestions(projects) {
   }
 }
 
+function renderProjectChips(projects) {
+  projectChipsEl.innerHTML = "";
+
+  const sorted = [...projects]
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"))
+    .slice(0, 8);
+
+  if (!sorted.length) {
+    const muted = document.createElement("span");
+    muted.className = "chips-placeholder";
+    muted.textContent = "暂无历史项目";
+    projectChipsEl.appendChild(muted);
+    return;
+  }
+
+  for (const project of sorted) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "project-chip";
+    chip.textContent = project.name;
+    if ((projectInputEl.value.trim() || "默认项目") === project.name) {
+      chip.classList.add("is-active");
+    }
+
+    chip.addEventListener("click", () => {
+      projectInputEl.value = project.name;
+      renderProjectChips(state.projects);
+      updateComposerSummary();
+    });
+
+    projectChipsEl.appendChild(chip);
+  }
+}
+
 function renderParentOptions(parentCandidates) {
   const currentValue = parentSelectEl.value;
   parentSelectEl.innerHTML = "";
@@ -356,6 +473,32 @@ function renderParentOptions(parentCandidates) {
   }
 }
 
+function syncFieldsWithParent() {
+  const selectedId = Number(parentSelectEl.value);
+  if (!selectedId) {
+    updateComposerSummary();
+    return;
+  }
+
+  const parent = state.parents.find((item) => item.id === selectedId);
+  if (!parent) {
+    updateComposerSummary();
+    return;
+  }
+
+  const currentProject = projectInputEl.value.trim();
+  if (!currentProject || currentProject === "默认项目") {
+    projectInputEl.value = parent.project || "默认项目";
+  }
+
+  if (!dueDateInputEl.value && parent.due_date) {
+    dueDateInputEl.value = parent.due_date;
+  }
+
+  renderProjectChips(state.projects);
+  updateComposerSummary();
+}
+
 async function requestJSON(url, options = {}) {
   const response = await fetch(url, {
     headers: {
@@ -385,12 +528,18 @@ async function loadTodos({ silent = false } = {}) {
     ]);
 
     state.items = todoPayload.items || [];
+    state.projects = metaPayload.projects || [];
+    state.parents = metaPayload.parents || [];
+
     renderStats(todoPayload.stats || {});
     renderTodos(state.items);
-    renderProjectSuggestions(metaPayload.projects || []);
-    renderParentOptions(metaPayload.parents || []);
+    renderProjectSuggestions(state.projects);
+    renderProjectChips(state.projects);
+    renderParentOptions(state.parents);
     renderFilterButtons();
     renderViewModeButtons();
+    renderComposeModeButtons();
+    updateComposerSummary();
     setSyncStatus("已连接");
 
     if (!silent) {
@@ -404,13 +553,16 @@ async function loadTodos({ silent = false } = {}) {
   }
 }
 
+function resetComposerFields() {
+  todoInputEl.value = "";
+  todoBatchInputEl.value = "";
+  dueDateInputEl.value = "";
+  parentSelectEl.value = "";
+  updateComposerSummary();
+}
+
 async function onAddTodo(event) {
   event.preventDefault();
-  const title = todoInputEl.value.trim();
-  if (!title) {
-    setMessage("请输入待办内容", true);
-    return;
-  }
 
   const project = projectInputEl.value.trim() || "默认项目";
   const dueDate = dueDateInputEl.value || null;
@@ -418,31 +570,60 @@ async function onAddTodo(event) {
 
   setBusy(true);
   setMessage("正在保存...");
-  try {
-    await requestJSON("/api/todos", {
-      method: "POST",
-      body: JSON.stringify({
-        title,
-        project,
-        dueDate,
-        parentId,
-      }),
-    });
 
-    todoInputEl.value = "";
+  try {
+    if (state.composeMode === "batch") {
+      const titles = getBatchTitles();
+      if (!titles.length) {
+        throw new Error("批量模式下请至少填写一条任务");
+      }
+
+      const result = await requestJSON("/api/todos/bulk", {
+        method: "POST",
+        body: JSON.stringify({
+          titles,
+          project,
+          dueDate,
+          parentId,
+        }),
+      });
+
+      todoBatchInputEl.value = "";
+      setMessage(`批量创建成功，共 ${result.count} 条`);
+    } else {
+      const title = todoInputEl.value.trim();
+      if (!title) {
+        throw new Error("请输入待办内容");
+      }
+
+      await requestJSON("/api/todos", {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          project,
+          dueDate,
+          parentId,
+        }),
+      });
+
+      todoInputEl.value = "";
+      setMessage("保存成功");
+    }
+
     parentSelectEl.value = "";
-    setMessage("保存成功");
     await loadTodos({ silent: true });
   } catch (error) {
     setMessage(error.message || "保存失败", true);
   } finally {
     setBusy(false);
+    updateComposerSummary();
   }
 }
 
 async function onToggleTodo(id) {
   setBusy(true);
   setMessage("正在更新状态...");
+
   try {
     await requestJSON(`/api/todos/${id}/toggle`, { method: "PATCH" });
     setMessage("状态已更新");
@@ -459,6 +640,7 @@ for (const button of filterButtons) {
     if (state.busy) {
       return;
     }
+
     state.filter = button.dataset.filter;
     await loadTodos();
   });
@@ -469,11 +651,54 @@ for (const button of viewModeButtons) {
     if (state.busy) {
       return;
     }
+
     state.viewMode = button.dataset.view;
     renderViewModeButtons();
     renderTodos(state.items);
   });
 }
 
+for (const button of composeModeButtons) {
+  button.addEventListener("click", () => {
+    if (state.busy) {
+      return;
+    }
+
+    setComposeMode(button.dataset.composeMode);
+  });
+}
+
+for (const button of quickDateButtons) {
+  button.addEventListener("click", () => {
+    if (button.dataset.clearDate === "true") {
+      dueDateInputEl.value = "";
+      updateComposerSummary();
+      return;
+    }
+
+    const offset = Number(button.dataset.daysOffset || 0);
+    const date = new Date();
+    date.setDate(date.getDate() + offset);
+    dueDateInputEl.value = formatDateForInput(date);
+    updateComposerSummary();
+  });
+}
+
+todoInputEl.addEventListener("input", updateComposerSummary);
+todoBatchInputEl.addEventListener("input", updateComposerSummary);
+projectInputEl.addEventListener("input", () => {
+  renderProjectChips(state.projects);
+  updateComposerSummary();
+});
+dueDateInputEl.addEventListener("input", updateComposerSummary);
+parentSelectEl.addEventListener("change", syncFieldsWithParent);
+
+resetComposerButtonEl.addEventListener("click", () => {
+  resetComposerFields();
+  setMessage("已清空当前输入");
+});
+
 todoFormEl.addEventListener("submit", onAddTodo);
+
+setComposeMode("single");
 loadTodos();
