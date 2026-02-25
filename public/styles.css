@@ -175,8 +175,9 @@ h1 {
 
 .composer-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
   gap: 14px;
+  align-items: start;
 }
 
 input[type="text"],
@@ -189,6 +190,8 @@ textarea {
   padding: 12px 14px;
   background: #fff;
   color: var(--text);
+  width: 100%;
+  min-width: 0;
 }
 
 textarea {
@@ -199,17 +202,19 @@ textarea {
 .composer-left {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .composer-extra {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 
 .field {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .field span {
@@ -291,6 +296,7 @@ button {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.74);
   padding: 12px;
+  min-width: 0;
 }
 
 .composer-summary h3 {
@@ -321,6 +327,7 @@ button {
   font-size: 0.86rem;
   font-weight: 700;
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 #summaryHint {
@@ -609,6 +616,16 @@ button {
   position: absolute;
   white-space: nowrap;
   width: 1px;
+}
+
+@media (max-width: 860px) {
+  .composer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-extra {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 700px) {
