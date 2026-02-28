@@ -60,6 +60,14 @@ export REQUIRE_EMAIL_VERIFICATION=1
 npm test
 ```
 
+## 代码检查
+
+```bash
+npm run lint
+```
+
+- CI 已配置在 `.github/workflows/ci.yml`，会在 `push` 与 `pull_request` 时自动执行 `lint + test`。
+
 ## Docker 部署（推荐，仅应用容器）
 
 ```bash
