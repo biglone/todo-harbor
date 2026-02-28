@@ -223,3 +223,26 @@ docker compose ps
 ```
 
 说明：数据保存在 `./data`，回滚不会清空数据。
+
+## 自动拉取并重启（push 后自动更新）
+
+项目内已提供：
+
+- 脚本：`scripts/auto-deploy-on-remote-update.sh`
+- systemd 用户级模板：`deploy/systemd/todo-harbor-auto-deploy.service` / `deploy/systemd/todo-harbor-auto-deploy.timer`
+
+安装（当前用户）：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/todo-harbor-auto-deploy.service ~/.config/systemd/user/
+cp deploy/systemd/todo-harbor-auto-deploy.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now todo-harbor-auto-deploy.timer
+```
+
+说明：
+
+- 定时器每分钟检查一次远端 `origin/master`。
+- 检测到新提交后会自动 `git pull --ff-only` 并执行 `docker compose up -d --build --remove-orphans`。
+- 查看日志：`journalctl --user -u todo-harbor-auto-deploy.service -f`
