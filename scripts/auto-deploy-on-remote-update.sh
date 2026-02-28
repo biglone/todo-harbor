@@ -61,6 +61,6 @@ if [[ "$TARGET_SHA" == "$LAST_DEPLOY_SHA" ]]; then
 fi
 
 echo "[todo-harbor:auto-deploy] deploying commit $TARGET_SHA"
-docker compose up -d --build --remove-orphans
+APP_GIT_SHA="$TARGET_SHA" docker compose up -d --build --remove-orphans
 printf '%s' "$TARGET_SHA" > "$LAST_DEPLOY_FILE"
 echo "[todo-harbor:auto-deploy] deploy completed at $(date -Iseconds)"
