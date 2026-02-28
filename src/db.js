@@ -76,6 +76,7 @@ const createTablesSQL = `
     title TEXT NOT NULL CHECK (length(trim(title)) > 0),
     project TEXT NOT NULL DEFAULT '默认项目',
     due_date TEXT,
+    reminder_at TEXT,
     parent_id INTEGER,
     priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
     status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'blocked')),
@@ -142,6 +143,10 @@ if (!tableColumns.has("due_date")) {
   db.exec(`ALTER TABLE todos ADD COLUMN due_date TEXT;`);
 }
 
+if (!tableColumns.has("reminder_at")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN reminder_at TEXT;`);
+}
+
 if (!tableColumns.has("parent_id")) {
   db.exec(`ALTER TABLE todos ADD COLUMN parent_id INTEGER;`);
 }
@@ -167,6 +172,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos (completed);
   CREATE INDEX IF NOT EXISTS idx_todos_project ON todos (project);
   CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos (due_date);
+  CREATE INDEX IF NOT EXISTS idx_todos_reminder_at ON todos (reminder_at);
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
   CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos (priority);
   CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
@@ -289,7 +295,7 @@ const claimUnownedTodosQuery = db.prepare(`
 `);
 
 const todoSelectColumns = `
-  id, title, project, due_date, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
+  id, title, project, due_date, reminder_at, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
 `;
 
 const listTodosCreatedDescQuery = db.prepare(`
@@ -347,8 +353,8 @@ const countDueSnapshotQuery = db.prepare(`
 `);
 
 const createTodoQuery = db.prepare(`
-  INSERT INTO todos (user_id, title, project, due_date, parent_id, priority, status, recurrence, tags)
-  VALUES (@user_id, @title, @project, @due_date, @parent_id, @priority, @status, @recurrence, @tags)
+  INSERT INTO todos (user_id, title, project, due_date, reminder_at, parent_id, priority, status, recurrence, tags)
+  VALUES (@user_id, @title, @project, @due_date, @reminder_at, @parent_id, @priority, @status, @recurrence, @tags)
 `);
 
 const updateTodoQuery = db.prepare(`
@@ -357,6 +363,7 @@ const updateTodoQuery = db.prepare(`
     title = @title,
     project = @project,
     due_date = @due_date,
+    reminder_at = @reminder_at,
     parent_id = @parent_id,
     priority = @priority,
     status = @status,
@@ -384,6 +391,7 @@ const updateTodoProjectDueQuery = db.prepare(`
   SET
     project = @project,
     due_date = @due_date,
+    reminder_at = @reminder_at,
     priority = @priority,
     status = @status,
     recurrence = @recurrence,
@@ -472,19 +480,19 @@ const listTodosByUserRawQuery = db.prepare(`
 
 const insertTodoRawQuery = db.prepare(`
   INSERT INTO todos (
-    id, user_id, title, project, due_date, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
+    id, user_id, title, project, due_date, reminder_at, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
   )
   VALUES (
-    @id, @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @recurrence, @tags, @completed, @created_at, @completed_at
+    @id, @user_id, @title, @project, @due_date, @reminder_at, @parent_id, @priority, @status, @recurrence, @tags, @completed, @created_at, @completed_at
   )
 `);
 
 const insertImportedTodoQuery = db.prepare(`
   INSERT INTO todos (
-    user_id, title, project, due_date, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
+    user_id, title, project, due_date, reminder_at, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
   )
   VALUES (
-    @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @recurrence, @tags, @completed, @created_at, @completed_at
+    @user_id, @title, @project, @due_date, @reminder_at, @parent_id, @priority, @status, @recurrence, @tags, @completed, @created_at, @completed_at
   )
 `);
 
@@ -665,11 +673,53 @@ function isValidDateString(value) {
   );
 }
 
+function isValidDateTimeString(value) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [datePart, timePart] = String(value).split("T");
+  if (!isValidDateString(datePart)) {
+    return false;
+  }
+
+  const [hours, minutes] = timePart.split(":").map(Number);
+  return (
+    Number.isInteger(hours) &&
+    Number.isInteger(minutes) &&
+    hours >= 0 &&
+    hours <= 23 &&
+    minutes >= 0 &&
+    minutes <= 59
+  );
+}
+
 function formatDateForInput(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDateTimeForInput(date) {
+  const datePart = formatDateForInput(date);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${datePart}T${hours}:${minutes}`;
+}
+
+function parseDateString(value) {
+  const [year, month, day] = String(value || "")
+    .split("-")
+    .map(Number);
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
+function parseDateTimeString(value) {
+  const [datePart, timePart] = String(value || "").split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hours, minutes] = timePart.split(":").map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
 }
 
 function getTodayDateString() {
@@ -717,6 +767,27 @@ function getNextRecurringDueDate(dueDate, recurrence) {
   }
 
   return addMonthsToDateString(dueDate, 1);
+}
+
+function getNextRecurringReminderAt(reminderAt, dueDate, nextDueDate) {
+  if (
+    !reminderAt ||
+    !isValidDateTimeString(reminderAt) ||
+    !dueDate ||
+    !isValidDateString(dueDate) ||
+    !nextDueDate ||
+    !isValidDateString(nextDueDate)
+  ) {
+    return null;
+  }
+
+  const currentReminder = parseDateTimeString(reminderAt);
+  const currentDue = parseDateString(dueDate);
+  const nextDue = parseDateString(nextDueDate);
+
+  const offsetMs = currentReminder.getTime() - currentDue.getTime();
+  const nextReminder = new Date(nextDue.getTime() + offsetMs);
+  return formatDateTimeForInput(nextReminder);
 }
 
 function requireUserId(rawUserId) {
@@ -827,6 +898,7 @@ function normalizeTodoPayload({
   title: rawTitle,
   project: rawProject,
   dueDate: rawDueDate,
+  reminderAt: rawReminderAt,
   parentId,
   priority: rawPriority,
   status: rawStatus,
@@ -837,10 +909,12 @@ function normalizeTodoPayload({
   const title = String(rawTitle || "").trim();
   const project = String(rawProject || "").trim() || "默认项目";
   const dueDate = rawDueDate ? String(rawDueDate).trim() : null;
+  const reminderAt = rawReminderAt ? String(rawReminderAt).trim() : null;
   const parentIdValue = Number.isInteger(parentId) && parentId > 0 ? parentId : null;
   const priority = normalizeTodoPriority(rawPriority);
   const status = normalizeTodoStatus(rawStatus);
   const recurrence = normalizeTodoRecurrence(rawRecurrence);
+  const normalizedReminderAt = reminderAt && isValidDateTimeString(reminderAt) ? reminderAt : null;
   const tags = stringifyTodoTags(rawTags);
 
   return {
@@ -848,6 +922,7 @@ function normalizeTodoPayload({
     title,
     project,
     due_date: dueDate || null,
+    reminder_at: normalizedReminderAt,
     parent_id: parentIdValue,
     priority,
     status,
@@ -892,6 +967,10 @@ function restoreSnapshot(userId, snapshotRows) {
         title: String(row.title),
         project: String(row.project || "默认项目"),
         due_date: row.due_date ? String(row.due_date) : null,
+        reminder_at:
+          row.reminder_at && isValidDateTimeString(String(row.reminder_at))
+            ? String(row.reminder_at)
+            : null,
         parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
         priority: normalizeTodoPriority(row.priority),
         status: normalizeTodoStatus(row.status),
@@ -951,6 +1030,11 @@ function createNextRecurringTodo(userId, sourceTodo) {
   if (!nextDueDate) {
     return null;
   }
+  const nextReminderAt = getNextRecurringReminderAt(
+    sourceTodo?.reminder_at,
+    sourceTodo?.due_date,
+    nextDueDate,
+  );
 
   const parentId =
     Number.isInteger(sourceTodo?.parent_id) && sourceTodo.parent_id > 0
@@ -964,6 +1048,7 @@ function createNextRecurringTodo(userId, sourceTodo) {
     title: String(sourceTodo?.title || ""),
     project: String(sourceTodo?.project || "默认项目"),
     due_date: nextDueDate,
+    reminder_at: nextReminderAt,
     parent_id: safeParentId,
     priority: normalizeTodoPriority(sourceTodo?.priority),
     status: "todo",
@@ -1078,7 +1163,10 @@ function clearCompletedTodos(userId) {
   return clearCompleted();
 }
 
-function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, status, recurrence, tags }) {
+function updateTodosBatch(
+  userId,
+  { ids, project, dueDate, reminderAt, completed, priority, status, recurrence, tags },
+) {
   const userIdValue = requireUserId(userId);
   const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
   if (!uniqueIds.length) {
@@ -1124,6 +1212,7 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
       if (
         project !== undefined ||
         dueDate !== undefined ||
+        reminderAt !== undefined ||
         priority !== undefined ||
         status !== undefined ||
         recurrence !== undefined ||
@@ -1131,6 +1220,7 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
       ) {
         const nextProject = project !== undefined ? project : current.project;
         const nextDueDate = dueDate !== undefined ? dueDate : current.due_date;
+        const nextReminderAt = reminderAt !== undefined ? reminderAt : current.reminder_at;
         const nextPriority = priority !== undefined ? priority : current.priority;
         const nextStatus = status !== undefined ? status : current.status;
         const nextRecurrence = recurrence !== undefined ? recurrence : current.recurrence;
@@ -1140,6 +1230,7 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
           user_id: userIdValue,
           project: nextProject,
           due_date: nextDueDate || null,
+          reminder_at: nextReminderAt || null,
           priority: normalizeTodoPriority(nextPriority),
           status: normalizeTodoStatus(nextStatus),
           recurrence: normalizeTodoRecurrence(nextRecurrence),
@@ -1172,6 +1263,7 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
             ...current,
             project: project !== undefined ? project : current.project,
             due_date: dueDate !== undefined ? dueDate || null : current.due_date,
+            reminder_at: reminderAt !== undefined ? reminderAt || null : current.reminder_at,
             priority: priority !== undefined ? priority : current.priority,
             recurrence: recurrence !== undefined ? recurrence : current.recurrence,
             tags: tags !== undefined ? tags : current.tags,
@@ -1210,6 +1302,13 @@ function normalizeImportItem(rawItem, index) {
     throw new Error(`items[${index}].dueDate must be YYYY-MM-DD`);
   }
 
+  const reminderAtRaw = rawItem?.reminder_at ?? rawItem?.reminderAt ?? null;
+  const reminderAt =
+    reminderAtRaw === null || reminderAtRaw === undefined ? null : String(reminderAtRaw).trim() || null;
+  if (reminderAt && !isValidDateTimeString(reminderAt)) {
+    throw new Error(`items[${index}].reminderAt must be YYYY-MM-DDTHH:mm`);
+  }
+
   const priority = normalizeTodoPriority(rawItem?.priority);
   const status = normalizeTodoStatus(rawItem?.status);
   const recurrence = normalizeTodoRecurrence(rawItem?.recurrence);
@@ -1233,6 +1332,7 @@ function normalizeImportItem(rawItem, index) {
     title,
     project,
     due_date: dueDate,
+    reminder_at: reminderAt,
     priority,
     status,
     recurrence,
@@ -1263,6 +1363,7 @@ function importTodos(userId, { items, mode = "merge" }) {
         title: row.title,
         project: row.project,
         due_date: row.due_date,
+        reminder_at: row.reminder_at,
         parent_id: null,
         priority: row.priority,
         status: row.status,
@@ -1307,6 +1408,7 @@ function exportTodos(userId) {
     title: String(row.title),
     project: String(row.project || "默认项目"),
     due_date: row.due_date ? String(row.due_date) : null,
+    reminder_at: row.reminder_at ? String(row.reminder_at) : null,
     parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
     priority: normalizeTodoPriority(row.priority),
     status: normalizeTodoStatus(row.status),

@@ -45,6 +45,7 @@ const singleInputFieldEl = document.getElementById("singleInputField");
 const batchInputFieldEl = document.getElementById("batchInputField");
 const projectInputEl = document.getElementById("projectInput");
 const dueDateInputEl = document.getElementById("dueDateInput");
+const reminderAtInputEl = document.getElementById("reminderAtInput");
 const parentSelectEl = document.getElementById("parentSelect");
 const priorityInputEl = document.getElementById("priorityInput");
 const statusInputEl = document.getElementById("statusInput");
@@ -62,6 +63,7 @@ const summaryModeEl = document.getElementById("summaryMode");
 const summaryCountEl = document.getElementById("summaryCount");
 const summaryProjectEl = document.getElementById("summaryProject");
 const summaryDateEl = document.getElementById("summaryDate");
+const summaryReminderEl = document.getElementById("summaryReminder");
 const summaryParentEl = document.getElementById("summaryParent");
 const summaryRecurrenceEl = document.getElementById("summaryRecurrence");
 const summaryHintEl = document.getElementById("summaryHint");
@@ -237,6 +239,9 @@ function setBusy(nextBusy) {
   }
   if (statusFilterSelectEl) {
     statusFilterSelectEl.disabled = locked;
+  }
+  if (reminderAtInputEl) {
+    reminderAtInputEl.disabled = locked;
   }
   if (recurrenceInputEl) {
     recurrenceInputEl.disabled = locked;
@@ -493,6 +498,19 @@ function getDueStatus(dueDate) {
   return "future";
 }
 
+function isReminderDue(reminderAt) {
+  if (!reminderAt) {
+    return false;
+  }
+
+  const date = new Date(reminderAt);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  return date.getTime() <= Date.now();
+}
+
 function formatPriorityLabel(priority) {
   const labelMap = {
     high: "高优先级",
@@ -586,6 +604,7 @@ function renderComposerActionButtons() {
 function updateComposerSummary() {
   const project = projectInputEl.value.trim() || "默认项目";
   const dueDate = dueDateInputEl.value;
+  const reminderAt = reminderAtInputEl ? reminderAtInputEl.value : "";
   const recurrence = recurrenceInputEl ? recurrenceInputEl.value : "none";
   const parentText = parentSelectEl.value
     ? parentSelectEl.options[parentSelectEl.selectedIndex]?.textContent || "顶级任务"
@@ -599,6 +618,9 @@ function updateComposerSummary() {
   summaryCountEl.textContent = `${plannedCount} 条`;
   summaryProjectEl.textContent = project;
   summaryDateEl.textContent = dueDate ? formatDateOnly(dueDate) : "未设置到期日";
+  if (summaryReminderEl) {
+    summaryReminderEl.textContent = reminderAt ? formatDateTime(reminderAt) : "未设置提醒";
+  }
   summaryParentEl.textContent = parentText;
   if (summaryRecurrenceEl) {
     summaryRecurrenceEl.textContent = formatRecurrenceLabel(recurrence);
@@ -747,6 +769,9 @@ function onEditTodo(id) {
   todoInputEl.value = todo.title;
   projectInputEl.value = todo.project || "默认项目";
   dueDateInputEl.value = todo.due_date || "";
+  if (reminderAtInputEl) {
+    reminderAtInputEl.value = todo.reminder_at || "";
+  }
   if (priorityInputEl) {
     priorityInputEl.value = todo.priority || "medium";
   }
@@ -832,6 +857,18 @@ function renderTodoNode(item, depth) {
       tagEl.textContent = `#${text}`;
       tagsEl.appendChild(tagEl);
     }
+  }
+
+  if (item.reminder_at) {
+    const reminderTag = document.createElement("span");
+    reminderTag.className = "tag tag-reminder";
+    if (!item.completed && isReminderDue(item.reminder_at)) {
+      reminderTag.classList.add("is-due");
+      reminderTag.textContent = `提醒已到 · ${formatDateTime(item.reminder_at)}`;
+    } else {
+      reminderTag.textContent = `提醒 · ${formatDateTime(item.reminder_at)}`;
+    }
+    tagsEl.appendChild(reminderTag);
   }
 
   if (item.due_date) {
@@ -1285,6 +1322,10 @@ function syncFieldsWithParent() {
     dueDateInputEl.value = parent.due_date;
   }
 
+  if (reminderAtInputEl && !reminderAtInputEl.value && parent.reminder_at) {
+    reminderAtInputEl.value = parent.reminder_at;
+  }
+
   renderProjectChips(state.projects);
   updateComposerSummary();
 }
@@ -1497,6 +1538,9 @@ function resetComposerFields() {
   todoInputEl.value = "";
   todoBatchInputEl.value = "";
   dueDateInputEl.value = "";
+  if (reminderAtInputEl) {
+    reminderAtInputEl.value = "";
+  }
   parentSelectEl.value = "";
   if (priorityInputEl) {
     priorityInputEl.value = "medium";
@@ -1519,6 +1563,7 @@ async function onAddTodo(event) {
 
   const project = projectInputEl.value.trim() || "默认项目";
   const dueDate = dueDateInputEl.value || null;
+  const reminderAt = reminderAtInputEl ? reminderAtInputEl.value || null : null;
   const parentId = parentSelectEl.value ? Number(parentSelectEl.value) : null;
   const priority = priorityInputEl ? priorityInputEl.value : "medium";
   const status = statusInputEl ? statusInputEl.value : "todo";
@@ -1550,6 +1595,7 @@ async function onAddTodo(event) {
           title,
           project,
           dueDate,
+          reminderAt,
           parentId,
           priority,
           status,
@@ -1576,6 +1622,7 @@ async function onAddTodo(event) {
           titles,
           project,
           dueDate,
+          reminderAt,
           parentId,
           priority,
           status,
@@ -1598,6 +1645,7 @@ async function onAddTodo(event) {
           title,
           project,
           dueDate,
+          reminderAt,
           parentId,
           priority,
           status,
@@ -2466,6 +2514,9 @@ projectInputEl.addEventListener("input", () => {
   updateComposerSummary();
 });
 dueDateInputEl.addEventListener("input", updateComposerSummary);
+if (reminderAtInputEl) {
+  reminderAtInputEl.addEventListener("input", updateComposerSummary);
+}
 parentSelectEl.addEventListener("change", syncFieldsWithParent);
 if (priorityInputEl) {
   priorityInputEl.addEventListener("change", updateComposerSummary);

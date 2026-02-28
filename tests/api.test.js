@@ -35,6 +35,11 @@ function shiftDate(dateString, days) {
   return formatDateForInput(date);
 }
 
+function shiftDateTime(dateTimeString, days) {
+  const [datePart, timePart = "00:00"] = String(dateTimeString || "").split("T");
+  return `${shiftDate(datePart, days)}T${timePart.slice(0, 5)}`;
+}
+
 function createTestRequest({ env = {} } = {}) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const dataDir = path.join(os.tmpdir(), `todo-harbor-test-${id}`);
@@ -232,9 +237,11 @@ describe("Todos API", () => {
     await registerAndLogin(request);
 
     const dueDate = dateOffset(2);
+    const reminderAt = `${dateOffset(1)}T09:30`;
     const recurring = await createTodo(request, {
       title: "Daily standup",
       dueDate,
+      reminderAt,
       recurrence: "daily",
       status: "in_progress",
     });
@@ -265,6 +272,48 @@ describe("Todos API", () => {
     assert.equal(next.recurrence, "daily");
     assert.equal(next.status, "todo");
     assert.equal(next.due_date, shiftDate(dueDate, 1));
+    assert.equal(next.reminder_at, shiftDateTime(reminderAt, 1));
+  });
+
+  test("reminderAt supports create update batch and export", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+
+    const dueDate = dateOffset(5);
+    const reminderAt = `${dateOffset(4)}T08:15`;
+    const created = await createTodo(request, {
+      title: "Prepare meeting notes",
+      dueDate,
+      reminderAt,
+    });
+    assert.equal(created.reminder_at, reminderAt);
+
+    const invalid = await request.post("/api/todos").send({
+      title: "Bad reminder",
+      reminderAt: "2026-02-30 10:00",
+    });
+    assert.equal(invalid.status, 400);
+
+    const patchedReminder = `${dateOffset(4)}T10:45`;
+    const patched = await request.patch(`/api/todos/${created.id}`).send({
+      reminderAt: patchedReminder,
+    });
+    assert.equal(patched.status, 200);
+    assert.equal(patched.body.reminder_at, patchedReminder);
+
+    const batch = await request.post("/api/todos/batch").send({
+      ids: [created.id],
+      reminderAt: null,
+    });
+    assert.equal(batch.status, 200);
+    assert.equal(batch.body.count, 1);
+
+    const afterBatch = await listTodos(request);
+    assert.equal(afterBatch.items[0].reminder_at, null);
+
+    const exportRes = await request.get("/api/todos/export");
+    assert.equal(exportRes.status, 200);
+    assert.equal(exportRes.body.items[0].reminder_at, null);
   });
 
   test("hierarchy rules", async () => {

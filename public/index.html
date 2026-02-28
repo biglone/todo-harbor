@@ -215,6 +215,11 @@
                   <input id="dueDateInput" name="dueDate" type="date" />
                 </label>
 
+                <label class="field" for="reminderAtInput">
+                  <span>提醒时间</span>
+                  <input id="reminderAtInput" name="reminderAt" type="datetime-local" />
+                </label>
+
                 <label class="field" for="parentSelect">
                   <span>父任务</span>
                   <select id="parentSelect" name="parentId">
@@ -281,6 +286,7 @@
                 <div><dt>预计创建</dt><dd id="summaryCount">1 条</dd></div>
                 <div><dt>项目</dt><dd id="summaryProject">默认项目</dd></div>
                 <div><dt>到期日期</dt><dd id="summaryDate">未设置到期日</dd></div>
+                <div><dt>提醒</dt><dd id="summaryReminder">未设置提醒</dd></div>
                 <div><dt>父任务</dt><dd id="summaryParent">顶级任务</dd></div>
                 <div><dt>重复</dt><dd id="summaryRecurrence">不重复</dd></div>
               </dl>

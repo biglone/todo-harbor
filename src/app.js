@@ -871,6 +871,27 @@ function isValidDateString(value) {
   );
 }
 
+function isValidDateTimeString(value) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [datePart, timePart] = value.split("T");
+  if (!isValidDateString(datePart)) {
+    return false;
+  }
+
+  const [hours, minutes] = timePart.split(":").map(Number);
+  return (
+    Number.isInteger(hours) &&
+    Number.isInteger(minutes) &&
+    hours >= 0 &&
+    hours <= 23 &&
+    minutes >= 0 &&
+    minutes <= 59
+  );
+}
+
 function parsePositiveInteger(rawValue, { field, defaultValue, min, max }) {
   if (rawValue === undefined || rawValue === null || rawValue === "") {
     return { value: defaultValue };
@@ -911,6 +932,11 @@ function parseTodoInput(body, userId, { titleRequired = true } = {}) {
   const dueDateRaw = String(body?.dueDate || "").trim();
   if (dueDateRaw && !isValidDateString(dueDateRaw)) {
     return { error: "dueDate must be a valid date in YYYY-MM-DD format" };
+  }
+
+  const reminderAtRaw = String(body?.reminderAt || "").trim();
+  if (reminderAtRaw && !isValidDateTimeString(reminderAtRaw)) {
+    return { error: "reminderAt must be a valid datetime in YYYY-MM-DDTHH:mm format" };
   }
 
   const priority = String(body?.priority || "medium")
@@ -964,6 +990,7 @@ function parseTodoInput(body, userId, { titleRequired = true } = {}) {
       title,
       project,
       dueDate: dueDateRaw || null,
+      reminderAt: reminderAtRaw || null,
       parentId,
       priority,
       status,
@@ -1044,6 +1071,7 @@ function parseTodoUpdateInput(body, userId, existingTodo) {
     title: body?.title ?? existingTodo.title,
     project: body?.project ?? existingTodo.project,
     dueDate: body?.dueDate !== undefined ? body?.dueDate : existingTodo.due_date,
+    reminderAt: body?.reminderAt !== undefined ? body?.reminderAt : existingTodo.reminder_at,
     parentId: body?.parentId !== undefined ? body?.parentId : existingTodo.parent_id,
     priority: body?.priority ?? existingTodo.priority,
     status: body?.status ?? existingTodo.status,
@@ -1129,9 +1157,11 @@ app.post("/api/todos/bulk", (req, res) => {
       title,
       project: baseParsed.value.project,
       dueDate: baseParsed.value.dueDate,
+      reminderAt: baseParsed.value.reminderAt,
       parentId: baseParsed.value.parentId,
       priority: baseParsed.value.priority,
       status: baseParsed.value.status,
+      recurrence: baseParsed.value.recurrence,
       tags: baseParsed.value.tags,
     });
   }
@@ -1210,6 +1240,17 @@ app.post("/api/todos/batch", (req, res) => {
     hasOperation = true;
   }
 
+  if (req.body?.reminderAt !== undefined) {
+    const reminderAtRaw = req.body.reminderAt === null ? "" : String(req.body.reminderAt || "").trim();
+    if (reminderAtRaw && !isValidDateTimeString(reminderAtRaw)) {
+      return res.status(400).json({
+        error: "reminderAt must be a valid datetime in YYYY-MM-DDTHH:mm format",
+      });
+    }
+    payload.reminderAt = reminderAtRaw || null;
+    hasOperation = true;
+  }
+
   if (req.body?.priority !== undefined) {
     const priority = String(req.body.priority || "")
       .trim()
@@ -1275,7 +1316,7 @@ app.post("/api/todos/batch", (req, res) => {
   if (!hasOperation) {
     return res.status(400).json({
       error:
-        "At least one operation is required: completed, project, dueDate, priority, status, recurrence, or tags",
+        "At least one operation is required: completed, project, dueDate, reminderAt, priority, status, recurrence, or tags",
     });
   }
 

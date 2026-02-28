@@ -1070,6 +1070,18 @@ button {
   color: #5b3b9a;
 }
 
+.tag-reminder {
+  background: rgba(229, 242, 255, 0.92);
+  border-color: rgba(47, 116, 186, 0.26);
+  color: #1d4f86;
+}
+
+.tag-reminder.is-due {
+  background: rgba(255, 233, 232, 0.95);
+  border-color: rgba(183, 61, 52, 0.32);
+  color: #9a2e28;
+}
+
 .tag-label {
   background: rgba(236, 247, 243, 0.9);
   border-color: rgba(10, 127, 116, 0.26);

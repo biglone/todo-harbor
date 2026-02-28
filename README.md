@@ -7,6 +7,7 @@
 
 - 新增待办事项（支持填写项目、到期日期、父任务）
 - 任务属性支持：`优先级 / 状态 / 标签`
+- 支持任务提醒时间（`reminderAt`，格式 `YYYY-MM-DDTHH:mm`）
 - 周期任务（每天/每周/每月），完成后自动生成下一期任务
 - 新增区支持 `单条录入 / 批量录入` 两种模式
 - 切换完成/未完成状态
@@ -120,6 +121,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `title: string`（必填）
   - `project?: string`（可选，默认 `默认项目`）
   - `dueDate?: YYYY-MM-DD`（可选）
+  - `reminderAt?: YYYY-MM-DDTHH:mm`（可选）
   - `parentId?: number`（可选，表示创建子任务）
   - `priority?: low|medium|high`（可选，默认 `medium`）
   - `status?: todo|in_progress|blocked`（可选，默认 `todo`）
@@ -129,6 +131,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `titles: string[]`（必填，每个元素是一条任务标题）
   - `project?: string`
   - `dueDate?: YYYY-MM-DD`
+  - `reminderAt?: YYYY-MM-DDTHH:mm`
   - `parentId?: number`
   - `priority?: low|medium|high`
   - `status?: todo|in_progress|blocked`
@@ -139,6 +142,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `completed?: boolean`
   - `project?: string`
   - `dueDate?: YYYY-MM-DD | null`
+  - `reminderAt?: YYYY-MM-DDTHH:mm | null`
   - `priority?: low|medium|high`
   - `status?: todo|in_progress|blocked`
   - `recurrence?: none|daily|weekly|monthly`（设置为非 `none` 时需同时传 `dueDate`）
