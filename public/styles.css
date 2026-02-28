@@ -153,6 +153,13 @@ h1 {
   font-size: 0.97rem;
 }
 
+.build-info {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
 .status-pill {
   margin-top: 4px;
   background: rgba(36, 143, 82, 0.14);

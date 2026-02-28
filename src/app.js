@@ -4,6 +4,7 @@ const cookieSession = require("cookie-session");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const packageJson = require("../package.json");
 const {
   listTodos,
   createTodo,
@@ -70,6 +71,8 @@ const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
 const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const PUBLIC_INDEX_FILE = path.join(PUBLIC_DIR, "index.html");
+const APP_VERSION = process.env.APP_VERSION || packageJson.version || "0.0.0";
+const APP_GIT_SHA = process.env.APP_GIT_SHA || process.env.GIT_SHA || "";
 
 let mailTransporter = null;
 const authRateLimitBuckets = new Map();
@@ -117,7 +120,16 @@ app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
     dbFile,
+    version: APP_VERSION,
+    gitSha: APP_GIT_SHA || null,
     timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/api/version", (_req, res) => {
+  res.json({
+    version: APP_VERSION,
+    gitSha: APP_GIT_SHA || null,
   });
 });
 

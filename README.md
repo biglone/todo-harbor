@@ -19,6 +19,7 @@
 - 批量修改项目/到期日（页面内弹窗）
 - 导出/导入 JSON、支持多步撤销（Undo）
 - 注册/登录（数据按账号隔离）
+- 页面顶部显示当前版本号（含可选 Git 短 SHA）
 - SQLite 持久化保存（重启容器后数据仍保留）
 
 ## 项目结构
@@ -100,6 +101,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 ## 已实现 API
 
 - `GET /api/health`
+- `GET /api/version`（返回 `version` 与可选 `gitSha`）
 - `POST /api/auth/register`
   - `email: string`
   - `password: string`（8-72 位）

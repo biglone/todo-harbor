@@ -57,6 +57,7 @@ const addButtonEl = document.getElementById("addButton");
 const resetComposerButtonEl = document.getElementById("resetComposerButton");
 const messageBarEl = document.getElementById("messageBar");
 const syncStatusEl = document.getElementById("syncStatus");
+const buildInfoEl = document.getElementById("buildInfo");
 const templateEl = document.getElementById("todoTemplate");
 
 const summaryModeEl = document.getElementById("summaryMode");
@@ -333,6 +334,32 @@ function setSyncStatus(text, isError = false) {
 
   const shouldShow = Boolean(isError) || SYNC_STATUS_VISIBLE_STATES.has(value);
   syncStatusEl.classList.toggle("is-hidden", !shouldShow);
+}
+
+function renderBuildInfo(data) {
+  if (!buildInfoEl) {
+    return;
+  }
+
+  const version = String(data?.version || "").trim();
+  const gitSha = String(data?.gitSha || "").trim();
+  if (!version) {
+    buildInfoEl.textContent = "版本 --";
+    return;
+  }
+
+  buildInfoEl.textContent = gitSha
+    ? `版本 ${version} · ${gitSha.slice(0, 7)}`
+    : `版本 ${version}`;
+}
+
+async function loadBuildInfo() {
+  try {
+    const payload = await requestJSON("/api/version");
+    renderBuildInfo(payload);
+  } catch (_error) {
+    renderBuildInfo(null);
+  }
 }
 
 function updateAccountStatus(user) {
@@ -1530,6 +1557,7 @@ async function applyAuthTokensFromURL() {
 }
 
 async function bootstrapApp() {
+  await loadBuildInfo();
   await bootstrapAuth();
   await applyAuthTokensFromURL();
 }

@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const supertest = require("supertest");
+const packageJson = require("../package.json");
 
 function clearRequireCache(modulePath) {
   try {
@@ -555,6 +556,13 @@ describe("Todos API", () => {
 
     const settingsAuthed = await request.get("/settings");
     assert.equal(settingsAuthed.status, 200);
+  });
+
+  test("version endpoint returns app version", async () => {
+    const request = createTestRequest();
+    const version = await request.get("/api/version");
+    assert.equal(version.status, 200);
+    assert.equal(version.body.version, packageJson.version);
   });
 
   test("password reset flow", async () => {
