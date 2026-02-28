@@ -155,6 +155,17 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - 所有请求与错误日志以 JSON 行输出到 stdout
 - 关键字段：`timestamp`、`method`、`path`、`status`、`durationMs`
 
+## 安全与限流
+
+- 鉴权相关接口已启用基础频率限制（登录、注册、验证码、密码重置、账号更新等）。
+- 触发限流时返回 `429`，并包含 `retryAfterSec` 与 `Retry-After` 响应头。
+- 可通过环境变量调整：
+  - `AUTH_RATE_LIMIT_WINDOW_MS`（默认 `600000`，即 10 分钟）
+  - `AUTH_RATE_LIMIT_MAX`（默认 `120`）
+  - `AUTH_LOGIN_RATE_LIMIT_MAX`（默认 `40`）
+  - `AUTH_REGISTER_RATE_LIMIT_MAX`（默认 `30`）
+  - `AUTH_RESET_RATE_LIMIT_MAX`（默认 `30`）
+
 ## 邮箱验证与密码重置说明
 
 - 本地/开发模式下，验证与重置码会直接返回在响应中并打印到日志，便于测试。

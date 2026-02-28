@@ -26,12 +26,19 @@ function dateOffset(days) {
   return formatDateForInput(date);
 }
 
-function createTestRequest() {
+function createTestRequest({ env = {} } = {}) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const dataDir = path.join(os.tmpdir(), `todo-harbor-test-${id}`);
   fs.mkdirSync(dataDir, { recursive: true });
   process.env.DATA_DIR = dataDir;
   process.env.DB_FILE = path.join(dataDir, "todos.db");
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined || value === null) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = String(value);
+  }
 
   clearRequireCache("../src/db");
   clearRequireCache("../src/app");
@@ -395,6 +402,29 @@ describe("Todos API", () => {
     const me = await request.get("/api/auth/me");
     assert.equal(me.status, 200);
     assert.equal(me.body.emailVerified, true);
+  });
+
+  test("auth login endpoint is rate limited", async () => {
+    const request = createTestRequest({
+      env: {
+        AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+        AUTH_LOGIN_RATE_LIMIT_MAX: 3,
+      },
+    });
+    const email = `rate-${Date.now()}@example.com`;
+    const password = "password123";
+
+    await registerUser(request, { email, password });
+
+    for (let i = 0; i < 3; i += 1) {
+      const failed = await request.post("/api/auth/login").send({ email, password: "wrong-password" });
+      assert.equal(failed.status, 401);
+    }
+
+    const limited = await request.post("/api/auth/login").send({ email, password: "wrong-password" });
+    assert.equal(limited.status, 429);
+    assert.equal(limited.body.error, "Too many requests, please retry later");
+    assert.ok(Number(limited.body.retryAfterSec) > 0);
   });
 
   test("page routes are guarded by session", async () => {

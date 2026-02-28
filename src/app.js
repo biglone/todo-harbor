@@ -48,6 +48,11 @@ const VALID_PRIORITIES = new Set(["low", "medium", "high"]);
 const VALID_STATUSES = new Set(["todo", "in_progress", "blocked"]);
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
+const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
+const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || 120);
+const AUTH_LOGIN_RATE_LIMIT_MAX = Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || 40);
+const AUTH_REGISTER_RATE_LIMIT_MAX = Number(process.env.AUTH_REGISTER_RATE_LIMIT_MAX || 30);
+const AUTH_RESET_RATE_LIMIT_MAX = Number(process.env.AUTH_RESET_RATE_LIMIT_MAX || 30);
 const REGISTER_CODE_TTL_MINUTES = Number(process.env.REGISTER_CODE_TTL_MINUTES || 10);
 const VERIFY_TOKEN_TTL_MINUTES = Number(process.env.VERIFY_TOKEN_TTL_MINUTES || 60 * 24);
 const RESET_TOKEN_TTL_MINUTES = Number(process.env.RESET_TOKEN_TTL_MINUTES || 30);
@@ -66,6 +71,7 @@ const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const PUBLIC_INDEX_FILE = path.join(PUBLIC_DIR, "index.html");
 
 let mailTransporter = null;
+const authRateLimitBuckets = new Map();
 
 const app = express();
 // Cloudflare Tunnel/reverse proxy forwards X-Forwarded-Proto for secure cookies.
@@ -143,6 +149,52 @@ function isTokenExpired(expiresAt) {
     return true;
   }
   return Date.parse(expiresAt) <= Date.now();
+}
+
+function clampRateLimitValue(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : fallback;
+}
+
+function buildAuthRateLimitKey(scope, ...parts) {
+  const safeParts = parts.map((part) => String(part || "unknown").trim().toLowerCase() || "unknown");
+  return [scope, ...safeParts].join(":");
+}
+
+function takeRateLimitToken(key, { limit, windowMs }) {
+  const safeLimit = clampRateLimitValue(limit, AUTH_RATE_LIMIT_MAX);
+  const safeWindowMs = clampRateLimitValue(windowMs, AUTH_RATE_LIMIT_WINDOW_MS);
+  const now = Date.now();
+  const existing = authRateLimitBuckets.get(key) || [];
+  const recent = existing.filter((timestamp) => now - timestamp < safeWindowMs);
+
+  if (recent.length >= safeLimit) {
+    const retryAfterSec = Math.max(1, Math.ceil((safeWindowMs - (now - recent[0])) / 1000));
+    authRateLimitBuckets.set(key, recent);
+    return { allowed: false, retryAfterSec };
+  }
+
+  recent.push(now);
+  authRateLimitBuckets.set(key, recent);
+  return { allowed: true, retryAfterSec: 0 };
+}
+
+function clearRateLimitBucket(key) {
+  authRateLimitBuckets.delete(key);
+}
+
+function checkAuthRateLimit(req, res, key, { limit, windowMs } = {}) {
+  const result = takeRateLimitToken(key, { limit, windowMs });
+  if (result.allowed) {
+    return true;
+  }
+
+  res.set("Retry-After", String(result.retryAfterSec));
+  res.status(429).json({
+    error: "Too many requests, please retry later",
+    retryAfterSec: result.retryAfterSec,
+  });
+  return false;
 }
 
 function getMailer() {
@@ -304,6 +356,11 @@ function buildAuthQuerySuffix(req) {
 
 app.post("/api/auth/register/code/request", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
+  const rateLimitKey = buildAuthRateLimitKey("auth_register_code", req.ip, email || "anonymous");
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_REGISTER_RATE_LIMIT_MAX })) {
+    return;
+  }
+
   if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: "email is invalid" });
   }
@@ -334,6 +391,10 @@ app.post("/api/auth/register", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
   const code = String(req.body?.code || "").trim();
+  const rateLimitKey = buildAuthRateLimitKey("auth_register", req.ip, email || "anonymous");
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_REGISTER_RATE_LIMIT_MAX })) {
+    return;
+  }
 
   if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: "email is invalid" });
@@ -389,6 +450,10 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
+  const rateLimitKey = buildAuthRateLimitKey("auth_login", req.ip, email || "anonymous");
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_LOGIN_RATE_LIMIT_MAX })) {
+    return;
+  }
 
   if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: "email is invalid" });
@@ -405,6 +470,7 @@ app.post("/api/auth/login", (req, res) => {
 
   req.session.userId = user.id;
   req.session.email = user.email;
+  clearRateLimitBucket(rateLimitKey);
 
   return res.json({
     id: user.id,
@@ -431,6 +497,11 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 });
 
 app.post("/api/auth/verification/request", requireAuth, async (req, res) => {
+  const rateLimitKey = buildAuthRateLimitKey("auth_verify_request", req.ip, req.user?.email || req.user?.id);
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_RATE_LIMIT_MAX })) {
+    return;
+  }
+
   if (req.user.email_verified) {
     return res.json({ emailVerified: true });
   }
@@ -450,6 +521,11 @@ app.post("/api/auth/verification/request", requireAuth, async (req, res) => {
 
 app.post("/api/auth/verify", (req, res) => {
   const token = String(req.body?.token || "").trim();
+  const rateLimitKey = buildAuthRateLimitKey("auth_verify", req.ip);
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_RATE_LIMIT_MAX })) {
+    return;
+  }
+
   if (!token) {
     return res.status(400).json({ error: "token is required" });
   }
@@ -470,6 +546,11 @@ app.post("/api/auth/verify", (req, res) => {
 
 app.post("/api/auth/password/forgot", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
+  const rateLimitKey = buildAuthRateLimitKey("auth_password_forgot", req.ip, email || "anonymous");
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_RESET_RATE_LIMIT_MAX })) {
+    return;
+  }
+
   if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: "email is invalid" });
   }
@@ -495,6 +576,10 @@ app.post("/api/auth/password/forgot", async (req, res) => {
 app.post("/api/auth/password/reset", (req, res) => {
   const token = String(req.body?.token || "").trim();
   const newPassword = String(req.body?.password || "");
+  const rateLimitKey = buildAuthRateLimitKey("auth_password_reset", req.ip);
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_RESET_RATE_LIMIT_MAX })) {
+    return;
+  }
 
   if (!token) {
     return res.status(400).json({ error: "token is required" });
@@ -532,6 +617,11 @@ app.get("/api/account", requireAuth, (req, res) => {
 });
 
 app.post("/api/account/email", requireAuth, async (req, res) => {
+  const rateLimitKey = buildAuthRateLimitKey("account_email_update", req.ip, req.user?.id);
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_RATE_LIMIT_MAX })) {
+    return;
+  }
+
   const nextEmail = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
 
@@ -572,6 +662,11 @@ app.post("/api/account/email", requireAuth, async (req, res) => {
 });
 
 app.post("/api/account/password", requireAuth, (req, res) => {
+  const rateLimitKey = buildAuthRateLimitKey("account_password_update", req.ip, req.user?.id);
+  if (!checkAuthRateLimit(req, res, rateLimitKey, { limit: AUTH_RATE_LIMIT_MAX })) {
+    return;
+  }
+
   const currentPassword = String(req.body?.currentPassword || "");
   const newPassword = String(req.body?.newPassword || "");
 
