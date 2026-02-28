@@ -6,6 +6,45 @@ REMOTE_NAME="${REMOTE_NAME:-origin}"
 BRANCH_NAME="${BRANCH_NAME:-master}"
 STATE_DIR="${STATE_DIR:-$REPO_DIR/.deploy-state}"
 LAST_DEPLOY_FILE="$STATE_DIR/last_deployed_sha"
+APP_SERVICE_NAME="${APP_SERVICE_NAME:-app}"
+HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-120}"
+HEALTH_POLL_INTERVAL_SEC="${HEALTH_POLL_INTERVAL_SEC:-2}"
+
+wait_for_service_healthy() {
+  local service_name="$1"
+  local timeout_sec="$2"
+  local poll_interval_sec="$3"
+  local elapsed_sec=0
+  local container_id=""
+  local container_status=""
+
+  container_id="$(docker compose ps -q "$service_name")"
+  if [[ -z "$container_id" ]]; then
+    echo "[todo-harbor:auto-deploy] cannot find container for service '$service_name'"
+    return 1
+  fi
+
+  while (( elapsed_sec < timeout_sec )); do
+    container_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    case "$container_status" in
+      healthy | running)
+        echo "[todo-harbor:auto-deploy] service '$service_name' is $container_status"
+        return 0
+        ;;
+      unhealthy | exited | dead)
+        echo "[todo-harbor:auto-deploy] service '$service_name' is $container_status"
+        return 1
+        ;;
+      *)
+        sleep "$poll_interval_sec"
+        elapsed_sec=$((elapsed_sec + poll_interval_sec))
+        ;;
+    esac
+  done
+
+  echo "[todo-harbor:auto-deploy] timeout waiting for service '$service_name' health (${timeout_sec}s)"
+  return 1
+}
 
 cd "$REPO_DIR"
 
@@ -62,5 +101,10 @@ fi
 
 echo "[todo-harbor:auto-deploy] deploying commit $TARGET_SHA"
 APP_GIT_SHA="$TARGET_SHA" docker compose up -d --build --remove-orphans
+if ! wait_for_service_healthy "$APP_SERVICE_NAME" "$HEALTH_TIMEOUT_SEC" "$HEALTH_POLL_INTERVAL_SEC"; then
+  docker compose ps || true
+  echo "[todo-harbor:auto-deploy] deployment failed health validation, keep last deployed sha unchanged"
+  exit 1
+fi
 printf '%s' "$TARGET_SHA" > "$LAST_DEPLOY_FILE"
 echo "[todo-harbor:auto-deploy] deploy completed at $(date -Iseconds)"
