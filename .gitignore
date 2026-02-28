@@ -4,3 +4,4 @@ data/*
 npm-debug.log*
 .DS_Store
 .env
+.deploy-state/

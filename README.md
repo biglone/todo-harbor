@@ -244,5 +244,7 @@ systemctl --user enable --now todo-harbor-auto-deploy.timer
 说明：
 
 - 定时器每分钟检查一次远端 `origin/master`。
-- 检测到新提交后会自动 `git pull --ff-only` 并执行 `docker compose up -d --build --remove-orphans`。
+- 若远端有新提交，会自动 `git pull --ff-only`。
+- 当仓库与远端同步且“当前提交”尚未部署时，会执行 `docker compose up -d --build --remove-orphans`。
+- 部署状态记录在本地 `.deploy-state/last_deployed_sha`，用于确保每次推送后的新提交只部署一次。
 - 查看日志：`journalctl --user -u todo-harbor-auto-deploy.service -f`
