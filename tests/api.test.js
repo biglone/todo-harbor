@@ -329,6 +329,38 @@ describe("Todos API", () => {
     assert.equal(afterUndo.items.length, 3);
   });
 
+  test("undo supports multiple steps", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+
+    const first = await createTodo(request, { title: "First" });
+    const second = await createTodo(request, { title: "Second" });
+
+    const updated = await request.patch(`/api/todos/${first.id}`).send({ title: "First Updated" });
+    assert.equal(updated.status, 200);
+
+    const deleted = await request.delete(`/api/todos/${second.id}`);
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.count, 1);
+
+    const afterDelete = await listTodos(request);
+    assert.equal(afterDelete.items.length, 1);
+    assert.equal(afterDelete.items[0].title, "First Updated");
+
+    const undoDelete = await request.post("/api/todos/undo");
+    assert.equal(undoDelete.status, 200);
+    const afterUndoDelete = await listTodos(request);
+    assert.equal(afterUndoDelete.items.length, 2);
+    assert.ok(afterUndoDelete.items.some((item) => item.title === "Second"));
+
+    const undoUpdate = await request.post("/api/todos/undo");
+    assert.equal(undoUpdate.status, 200);
+    const afterUndoUpdate = await listTodos(request);
+    const restoredFirst = afterUndoUpdate.items.find((item) => item.id === first.id);
+    assert.ok(restoredFirst);
+    assert.equal(restoredFirst.title, "First");
+  });
+
   test("registration requires email code and login is separate", async () => {
     const request = createTestRequest();
     const email = `verify-${Date.now()}@example.com`;

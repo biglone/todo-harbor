@@ -10,11 +10,11 @@ fs.mkdirSync(dataDir, { recursive: true });
 const db = new Database(dbFile);
 db.pragma("journal_mode = WAL");
 
-const lastUndoSnapshots = new Map();
 const TODO_PRIORITY_VALUES = new Set(["low", "medium", "high"]);
 const TODO_STATUS_VALUES = new Set(["todo", "in_progress", "blocked"]);
 const DEFAULT_TODO_PRIORITY = "medium";
 const DEFAULT_TODO_STATUS = "todo";
+const UNDO_HISTORY_LIMIT = Number(process.env.UNDO_HISTORY_LIMIT || 20);
 
 const listFilterWhereClause = `
   user_id = @user_id
@@ -81,6 +81,13 @@ const createTablesSQL = `
     completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS undo_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `;
 
@@ -156,6 +163,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
   CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos (priority);
   CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
+  CREATE INDEX IF NOT EXISTS idx_undo_snapshots_user_id ON undo_snapshots (user_id);
   CREATE INDEX IF NOT EXISTS idx_users_verify_token_hash ON users (verify_token_hash);
   CREATE INDEX IF NOT EXISTS idx_users_reset_token_hash ON users (reset_token_hash);
 `);
@@ -476,6 +484,41 @@ const updateImportedParentQuery = db.prepare(`
   WHERE id = @id AND user_id = @user_id
 `);
 
+const insertUndoSnapshotQuery = db.prepare(`
+  INSERT INTO undo_snapshots (user_id, payload)
+  VALUES (@user_id, @payload)
+`);
+
+const pruneUndoSnapshotsQuery = db.prepare(`
+  DELETE FROM undo_snapshots
+  WHERE id IN (
+    SELECT id
+    FROM undo_snapshots
+    WHERE user_id = @user_id
+    ORDER BY id DESC
+    LIMIT -1 OFFSET @keep
+  )
+`);
+
+const countUndoSnapshotsQuery = db.prepare(`
+  SELECT COUNT(*) AS total
+  FROM undo_snapshots
+  WHERE user_id = @user_id
+`);
+
+const getLatestUndoSnapshotQuery = db.prepare(`
+  SELECT id, payload
+  FROM undo_snapshots
+  WHERE user_id = @user_id
+  ORDER BY id DESC
+  LIMIT 1
+`);
+
+const deleteUndoSnapshotByIdQuery = db.prepare(`
+  DELETE FROM undo_snapshots
+  WHERE id = @id AND user_id = @user_id
+`);
+
 function mapTodo(row) {
   const priority = normalizeTodoPriority(row.priority);
   const status = normalizeTodoStatus(row.status);
@@ -754,12 +797,26 @@ function normalizeTodoPayload({
 
 function saveUndoSnapshot(userId) {
   const id = requireUserId(userId);
-  lastUndoSnapshots.set(id, listTodosByUserRawQuery.all({ user_id: id }).map(mapRawTodo));
+  const snapshotRows = listTodosByUserRawQuery.all({ user_id: id }).map(mapRawTodo);
+  const saveSnapshot = db.transaction((rows) => {
+    insertUndoSnapshotQuery.run({
+      user_id: id,
+      payload: JSON.stringify(rows),
+    });
+
+    pruneUndoSnapshotsQuery.run({
+      user_id: id,
+      keep: Math.max(1, UNDO_HISTORY_LIMIT),
+    });
+  });
+
+  saveSnapshot(snapshotRows);
 }
 
 function hasUndoSnapshot(userId) {
   const id = requireUserId(userId);
-  return lastUndoSnapshots.has(id);
+  const row = countUndoSnapshotsQuery.get({ user_id: id }) || { total: 0 };
+  return Number(row.total || 0) > 0;
 }
 
 function restoreSnapshot(userId, snapshotRows) {
@@ -792,16 +849,24 @@ function restoreSnapshot(userId, snapshotRows) {
 
 function undoLastOperation(userId) {
   const id = requireUserId(userId);
-  if (!lastUndoSnapshots.has(id)) {
+  const snapshotRow = getLatestUndoSnapshotQuery.get({ user_id: id });
+  if (!snapshotRow) {
     return {
       restored: false,
       count: 0,
     };
   }
 
-  const snapshot = lastUndoSnapshots.get(id);
+  let snapshot = [];
+  try {
+    const parsed = JSON.parse(String(snapshotRow.payload || "[]"));
+    snapshot = Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    snapshot = [];
+  }
+
   restoreSnapshot(id, snapshot);
-  lastUndoSnapshots.delete(id);
+  deleteUndoSnapshotByIdQuery.run({ id: snapshotRow.id, user_id: id });
 
   return {
     restored: true,

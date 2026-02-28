@@ -15,7 +15,7 @@
 - 视图切换：普通视图 / 按项目分组 / 按到期日分组
 - 统计总数、进行中、已完成数量
 - 批量修改项目/到期日（页面内弹窗）
-- 导出/导入 JSON、撤销上一步（Undo）
+- 导出/导入 JSON、支持多步撤销（Undo）
 - 注册/登录（数据按账号隔离）
 - SQLite 持久化保存（重启容器后数据仍保留）
 
@@ -144,7 +144,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - body 支持 `{"mode":"merge"|"replace","items":[...]}` 或直接传数组
   - `replace` 会先清空现有数据
   - 单次导入最多 5000 条
-- `POST /api/todos/undo`（撤销上一步变更）
+- `POST /api/todos/undo`（撤销最近一步变更，可连续调用实现多步撤销）
 - `PATCH /api/todos/:id`（编辑任务标题/项目/到期日期/父任务）
 - `DELETE /api/todos/:id`（删除任务，含其子任务）
 - `DELETE /api/todos/completed`（清理全部已完成任务）
