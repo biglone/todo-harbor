@@ -259,6 +259,7 @@ systemctl --user enable --now todo-harbor-github-webhook.service
 
 - 每次 push 到 `origin/master`，GitHub 会立即回调本机 Webhook。
 - 回调后会执行 `git pull --ff-only` + `APP_GIT_SHA=<当前提交SHA> docker compose up -d --build --remove-orphans`。
+- 若部署进行中又收到新的 push，Webhook 会标记 pending，并在当前部署结束后自动再部署一次最新代码。
 - 部署状态记录在本地 `.deploy-state/last_deployed_sha`，用于确保每次推送后的新提交只部署一次。
 - 页面顶部版本信息会显示 `版本 x.y.z · <短SHA>`（数据来自 `/api/version`）。
 - Webhook 日志：`journalctl --user -u todo-harbor-github-webhook.service -f`

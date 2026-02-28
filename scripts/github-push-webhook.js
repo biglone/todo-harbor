@@ -20,6 +20,8 @@ if (!WEBHOOK_SECRET) {
 }
 
 let deployRunning = false;
+let deployPending = false;
+let pendingDeliveryId = "";
 
 function timingSafeEqual(a, b) {
   const aBuffer = Buffer.from(a, "utf8");
@@ -76,6 +78,19 @@ function triggerDeploy(deliveryId) {
   child.on("close", (code) => {
     deployRunning = false;
     log("deploy process completed", { deliveryId, exitCode: code });
+
+    if (!deployPending) {
+      return;
+    }
+
+    const nextDeliveryId = pendingDeliveryId || `${deliveryId}-pending`;
+    deployPending = false;
+    pendingDeliveryId = "";
+    log("pending push detected, starting follow-up deploy", {
+      deliveryId: nextDeliveryId,
+      previousDeliveryId: deliveryId,
+    });
+    triggerDeploy(nextDeliveryId);
   });
 }
 
@@ -122,7 +137,10 @@ function handleWebhook(req, res, rawBody) {
   }
 
   if (deployRunning) {
-    sendJson(res, 202, { ok: true, queued: false, reason: "deploy_running" });
+    deployPending = true;
+    pendingDeliveryId = deliveryId;
+    log("deploy running, mark pending", { deliveryId, repo, ref });
+    sendJson(res, 202, { ok: true, queued: true, reason: "deploy_running_pending" });
     return;
   }
 
@@ -133,7 +151,7 @@ function handleWebhook(req, res, rawBody) {
 
 const server = http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/health") {
-    sendJson(res, 200, { ok: true, running: deployRunning });
+    sendJson(res, 200, { ok: true, running: deployRunning, pending: deployPending });
     return;
   }
 
