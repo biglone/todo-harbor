@@ -44,6 +44,8 @@ const {
 const VALID_FILTERS = new Set(["all", "active", "completed"]);
 const VALID_SORTS = new Set(["created_desc", "created_asc", "due_asc", "due_desc"]);
 const VALID_DUE_SCOPES = new Set(["all", "overdue", "today", "week", "no_due"]);
+const VALID_PRIORITIES = new Set(["low", "medium", "high"]);
+const VALID_STATUSES = new Set(["todo", "in_progress", "blocked"]);
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
 const REGISTER_CODE_TTL_MINUTES = Number(process.env.REGISTER_CODE_TTL_MINUTES || 10);
@@ -604,6 +606,8 @@ app.get("/api/todos", (req, res) => {
 
   const keyword = String(req.query.q || "").trim();
   const project = String(req.query.project || "").trim();
+  const priority = String(req.query.priority || "").trim().toLowerCase();
+  const status = String(req.query.status || "").trim().toLowerCase();
   const dueFrom = String(req.query.dueFrom || "").trim();
   const dueTo = String(req.query.dueTo || "").trim();
   const sort = String(req.query.sort || "created_desc").trim();
@@ -639,6 +643,18 @@ app.get("/api/todos", (req, res) => {
     });
   }
 
+  if (priority && !VALID_PRIORITIES.has(priority)) {
+    return res.status(400).json({
+      error: "Invalid priority. Allowed values: low, medium, high",
+    });
+  }
+
+  if (status && !VALID_STATUSES.has(status)) {
+    return res.status(400).json({
+      error: "Invalid status. Allowed values: todo, in_progress, blocked",
+    });
+  }
+
   const page = parsePositiveInteger(req.query.page, {
     field: "page",
     defaultValue: 1,
@@ -664,6 +680,8 @@ app.get("/api/todos", (req, res) => {
     filter,
     project,
     keyword,
+    priority,
+    status,
     dueFrom,
     dueTo,
     sort,
@@ -799,6 +817,25 @@ function parseTodoInput(body, userId, { titleRequired = true } = {}) {
     return { error: "dueDate must be a valid date in YYYY-MM-DD format" };
   }
 
+  const priority = String(body?.priority || "medium")
+    .trim()
+    .toLowerCase();
+  if (!VALID_PRIORITIES.has(priority)) {
+    return { error: "priority must be one of: low, medium, high" };
+  }
+
+  const status = String(body?.status || "todo")
+    .trim()
+    .toLowerCase();
+  if (!VALID_STATUSES.has(status)) {
+    return { error: "status must be one of: todo, in_progress, blocked" };
+  }
+
+  const parsedTags = parseTodoTagsInput(body?.tags);
+  if (parsedTags.error) {
+    return parsedTags;
+  }
+
   let parentId = null;
   if (body?.parentId !== undefined && body?.parentId !== null && body?.parentId !== "") {
     parentId = Number(body.parentId);
@@ -822,8 +859,52 @@ function parseTodoInput(body, userId, { titleRequired = true } = {}) {
       project,
       dueDate: dueDateRaw || null,
       parentId,
+      priority,
+      status,
+      tags: parsedTags.value,
     },
   };
+}
+
+function parseTodoTagsInput(rawTags) {
+  if (rawTags === undefined || rawTags === null) {
+    return { value: [] };
+  }
+
+  let source = [];
+  if (Array.isArray(rawTags)) {
+    source = rawTags;
+  } else if (typeof rawTags === "string") {
+    source = rawTags.split(",");
+  } else {
+    return { error: "tags must be a string or string[]" };
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const raw of source) {
+    const tag = String(raw || "")
+      .trim()
+      .replace(/^#/, "")
+      .slice(0, 20);
+
+    if (!tag) {
+      continue;
+    }
+
+    const key = tag.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(tag);
+    if (deduped.length > 20) {
+      return { error: "tags cannot exceed 20 items" };
+    }
+  }
+
+  return { value: deduped };
 }
 
 function hasParentLoop(userId, todoId, nextParentId) {
@@ -857,6 +938,9 @@ function parseTodoUpdateInput(body, userId, existingTodo) {
     project: body?.project ?? existingTodo.project,
     dueDate: body?.dueDate !== undefined ? body?.dueDate : existingTodo.due_date,
     parentId: body?.parentId !== undefined ? body?.parentId : existingTodo.parent_id,
+    priority: body?.priority ?? existingTodo.priority,
+    status: body?.status ?? existingTodo.status,
+    tags: body?.tags !== undefined ? body?.tags : existingTodo.tags,
   };
 
   const parsed = parseTodoInput(normalized, userId);
@@ -938,6 +1022,9 @@ app.post("/api/todos/bulk", (req, res) => {
       project: baseParsed.value.project,
       dueDate: baseParsed.value.dueDate,
       parentId: baseParsed.value.parentId,
+      priority: baseParsed.value.priority,
+      status: baseParsed.value.status,
+      tags: baseParsed.value.tags,
     });
   }
 
@@ -1015,9 +1102,46 @@ app.post("/api/todos/batch", (req, res) => {
     hasOperation = true;
   }
 
+  if (req.body?.priority !== undefined) {
+    const priority = String(req.body.priority || "")
+      .trim()
+      .toLowerCase();
+    if (!VALID_PRIORITIES.has(priority)) {
+      return res.status(400).json({
+        error: "priority must be one of: low, medium, high",
+      });
+    }
+    payload.priority = priority;
+    hasOperation = true;
+  }
+
+  if (req.body?.status !== undefined) {
+    const status = String(req.body.status || "")
+      .trim()
+      .toLowerCase();
+    if (!VALID_STATUSES.has(status)) {
+      return res.status(400).json({
+        error: "status must be one of: todo, in_progress, blocked",
+      });
+    }
+    payload.status = status;
+    hasOperation = true;
+  }
+
+  if (req.body?.tags !== undefined) {
+    const parsedTags = parseTodoTagsInput(req.body.tags);
+    if (parsedTags.error) {
+      return res.status(400).json({
+        error: parsedTags.error,
+      });
+    }
+    payload.tags = parsedTags.value;
+    hasOperation = true;
+  }
+
   if (!hasOperation) {
     return res.status(400).json({
-      error: "At least one operation is required: completed, project, or dueDate",
+      error: "At least one operation is required: completed, project, dueDate, priority, status, or tags",
     });
   }
 

@@ -5,6 +5,8 @@ const state = {
   editingTodoId: null,
   searchKeyword: "",
   filterProject: "",
+  filterPriority: "",
+  filterStatus: "",
   dueFrom: "",
   dueTo: "",
   sort: "created_desc",
@@ -44,6 +46,9 @@ const batchInputFieldEl = document.getElementById("batchInputField");
 const projectInputEl = document.getElementById("projectInput");
 const dueDateInputEl = document.getElementById("dueDateInput");
 const parentSelectEl = document.getElementById("parentSelect");
+const priorityInputEl = document.getElementById("priorityInput");
+const statusInputEl = document.getElementById("statusInput");
+const tagsInputEl = document.getElementById("tagsInput");
 const projectSuggestionsEl = document.getElementById("projectSuggestions");
 const projectChipsEl = document.getElementById("projectChips");
 const addButtonEl = document.getElementById("addButton");
@@ -74,6 +79,8 @@ const projectFilterSelectEl = document.getElementById("projectFilterSelect");
 const dueFromInputEl = document.getElementById("dueFromInput");
 const dueToInputEl = document.getElementById("dueToInput");
 const sortSelectEl = document.getElementById("sortSelect");
+const priorityFilterSelectEl = document.getElementById("priorityFilterSelect");
+const statusFilterSelectEl = document.getElementById("statusFilterSelect");
 const resetQueryButtonEl = document.getElementById("resetQueryButton");
 const dueSnapshotEl = document.getElementById("dueSnapshot");
 const listActionsEl = document.getElementById("listActions");
@@ -159,6 +166,7 @@ const MODAL_TYPES = {
 
 let activeModalType = null;
 const EMAIL_NOT_VERIFIED_ERROR = "Email not verified";
+const SYNC_STATUS_VISIBLE_STATES = new Set(["同步中", "未登录", "邮箱未验证", "连接异常"]);
 
 function requiresEmailVerification(user) {
   return Boolean(user?.requireEmailVerification);
@@ -221,6 +229,12 @@ function setBusy(nextBusy) {
   }
   if (sortSelectEl) {
     sortSelectEl.disabled = locked;
+  }
+  if (priorityFilterSelectEl) {
+    priorityFilterSelectEl.disabled = locked;
+  }
+  if (statusFilterSelectEl) {
+    statusFilterSelectEl.disabled = locked;
   }
   if (resetQueryButtonEl) {
     resetQueryButtonEl.disabled = locked;
@@ -299,8 +313,16 @@ function setAccountMessage(text, isError = false) {
 }
 
 function setSyncStatus(text, isError = false) {
-  syncStatusEl.textContent = text;
+  if (!syncStatusEl) {
+    return;
+  }
+
+  const value = String(text || "").trim();
+  syncStatusEl.textContent = value;
   syncStatusEl.classList.toggle("is-error", Boolean(isError));
+
+  const shouldShow = Boolean(isError) || SYNC_STATUS_VISIBLE_STATES.has(value);
+  syncStatusEl.classList.toggle("is-hidden", !shouldShow);
 }
 
 function updateAccountStatus(user) {
@@ -464,6 +486,54 @@ function getDueStatus(dueDate) {
   }
 
   return "future";
+}
+
+function formatPriorityLabel(priority) {
+  const labelMap = {
+    high: "高优先级",
+    medium: "中优先级",
+    low: "低优先级",
+  };
+  return labelMap[priority] || "中优先级";
+}
+
+function formatStatusLabel(status) {
+  const labelMap = {
+    todo: "待开始",
+    in_progress: "进行中",
+    blocked: "阻塞中",
+  };
+  return labelMap[status] || "待开始";
+}
+
+function parseTagsText(value) {
+  const source = Array.isArray(value) ? value : String(value || "").split(",");
+  const deduped = [];
+  const seen = new Set();
+
+  for (const raw of source) {
+    const tag = String(raw || "")
+      .trim()
+      .replace(/^#/, "")
+      .slice(0, 20);
+
+    if (!tag) {
+      continue;
+    }
+
+    const key = tag.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(tag);
+    if (deduped.length >= 20) {
+      break;
+    }
+  }
+
+  return deduped;
 }
 
 function isValidDateInput(value) {
@@ -658,6 +728,15 @@ function onEditTodo(id) {
   todoInputEl.value = todo.title;
   projectInputEl.value = todo.project || "默认项目";
   dueDateInputEl.value = todo.due_date || "";
+  if (priorityInputEl) {
+    priorityInputEl.value = todo.priority || "medium";
+  }
+  if (statusInputEl) {
+    statusInputEl.value = todo.status || "todo";
+  }
+  if (tagsInputEl) {
+    tagsInputEl.value = Array.isArray(todo.tags) ? todo.tags.join(", ") : "";
+  }
 
   if (todo.parent_id) {
     const parentId = String(todo.parent_id);
@@ -701,6 +780,30 @@ function renderTodoNode(item, depth) {
   projectTag.className = "tag";
   projectTag.textContent = item.project || "默认项目";
   tagsEl.appendChild(projectTag);
+
+  const priorityTag = document.createElement("span");
+  priorityTag.className = `tag tag-priority ${item.priority ? `is-${item.priority}` : ""}`.trim();
+  priorityTag.textContent = formatPriorityLabel(item.priority);
+  tagsEl.appendChild(priorityTag);
+
+  const statusTag = document.createElement("span");
+  statusTag.className = `tag tag-status ${item.status ? `is-${item.status}` : ""}`.trim();
+  statusTag.textContent = formatStatusLabel(item.status);
+  tagsEl.appendChild(statusTag);
+
+  if (Array.isArray(item.tags)) {
+    for (const tag of item.tags) {
+      const text = String(tag || "").trim();
+      if (!text) {
+        continue;
+      }
+
+      const tagEl = document.createElement("span");
+      tagEl.className = "tag tag-label";
+      tagEl.textContent = `#${text}`;
+      tagsEl.appendChild(tagEl);
+    }
+  }
 
   if (item.due_date) {
     const dueDateTag = document.createElement("span");
@@ -978,6 +1081,8 @@ function renderViewModeButtons() {
 function syncQueryStateFromControls() {
   state.searchKeyword = searchInputEl ? searchInputEl.value.trim() : "";
   state.filterProject = projectFilterSelectEl ? projectFilterSelectEl.value : "";
+  state.filterPriority = priorityFilterSelectEl ? priorityFilterSelectEl.value : "";
+  state.filterStatus = statusFilterSelectEl ? statusFilterSelectEl.value : "";
   state.dueFrom = dueFromInputEl ? dueFromInputEl.value : "";
   state.dueTo = dueToInputEl ? dueToInputEl.value : "";
   state.sort = sortSelectEl ? sortSelectEl.value : "created_desc";
@@ -997,6 +1102,14 @@ function buildTodoQueryURL({ page = 1 } = {}) {
 
   if (state.filterProject) {
     params.set("project", state.filterProject);
+  }
+
+  if (state.filterPriority) {
+    params.set("priority", state.filterPriority);
+  }
+
+  if (state.filterStatus) {
+    params.set("status", state.filterStatus);
   }
 
   if (state.dueFrom) {
@@ -1192,6 +1305,7 @@ async function loadTodos({ silent = false, append = false } = {}) {
 
   setBusy(true);
   if (!silent) {
+    setSyncStatus("同步中");
     setMessage(append ? "正在加载更多..." : "正在同步数据...");
   }
 
@@ -1355,6 +1469,15 @@ function resetComposerFields() {
   todoBatchInputEl.value = "";
   dueDateInputEl.value = "";
   parentSelectEl.value = "";
+  if (priorityInputEl) {
+    priorityInputEl.value = "medium";
+  }
+  if (statusInputEl) {
+    statusInputEl.value = "todo";
+  }
+  if (tagsInputEl) {
+    tagsInputEl.value = "";
+  }
   renderProjectChips(state.projects);
   updateComposerSummary();
 }
@@ -1365,6 +1488,9 @@ async function onAddTodo(event) {
   const project = projectInputEl.value.trim() || "默认项目";
   const dueDate = dueDateInputEl.value || null;
   const parentId = parentSelectEl.value ? Number(parentSelectEl.value) : null;
+  const priority = priorityInputEl ? priorityInputEl.value : "medium";
+  const status = statusInputEl ? statusInputEl.value : "todo";
+  const tags = parseTagsText(tagsInputEl ? tagsInputEl.value : "");
 
   setBusy(true);
   setMessage("正在保存...");
@@ -1387,6 +1513,9 @@ async function onAddTodo(event) {
           project,
           dueDate,
           parentId,
+          priority,
+          status,
+          tags,
         }),
       });
 
@@ -1409,6 +1538,9 @@ async function onAddTodo(event) {
           project,
           dueDate,
           parentId,
+          priority,
+          status,
+          tags,
         }),
       });
 
@@ -1427,6 +1559,9 @@ async function onAddTodo(event) {
           project,
           dueDate,
           parentId,
+          priority,
+          status,
+          tags,
         }),
       });
 
@@ -1954,6 +2089,12 @@ function resetQueryFilters() {
   if (sortSelectEl) {
     sortSelectEl.value = "created_desc";
   }
+  if (priorityFilterSelectEl) {
+    priorityFilterSelectEl.value = "";
+  }
+  if (statusFilterSelectEl) {
+    statusFilterSelectEl.value = "";
+  }
 
   syncQueryStateFromControls();
 }
@@ -2249,6 +2390,24 @@ if (sortSelectEl) {
   });
 }
 
+if (priorityFilterSelectEl) {
+  priorityFilterSelectEl.addEventListener("change", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    loadTodos();
+  });
+}
+
+if (statusFilterSelectEl) {
+  statusFilterSelectEl.addEventListener("change", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    loadTodos();
+  });
+}
+
 if (resetQueryButtonEl) {
   resetQueryButtonEl.addEventListener("click", () => {
     if (state.busy || !state.accessEnabled) {
@@ -2267,6 +2426,15 @@ projectInputEl.addEventListener("input", () => {
 });
 dueDateInputEl.addEventListener("input", updateComposerSummary);
 parentSelectEl.addEventListener("change", syncFieldsWithParent);
+if (priorityInputEl) {
+  priorityInputEl.addEventListener("change", updateComposerSummary);
+}
+if (statusInputEl) {
+  statusInputEl.addEventListener("change", updateComposerSummary);
+}
+if (tagsInputEl) {
+  tagsInputEl.addEventListener("input", updateComposerSummary);
+}
 
 resetComposerButtonEl.addEventListener("click", () => {
   if (state.editingTodoId) {

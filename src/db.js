@@ -11,6 +11,10 @@ const db = new Database(dbFile);
 db.pragma("journal_mode = WAL");
 
 const lastUndoSnapshots = new Map();
+const TODO_PRIORITY_VALUES = new Set(["low", "medium", "high"]);
+const TODO_STATUS_VALUES = new Set(["todo", "in_progress", "blocked"]);
+const DEFAULT_TODO_PRIORITY = "medium";
+const DEFAULT_TODO_STATUS = "todo";
 
 const listFilterWhereClause = `
   user_id = @user_id
@@ -24,7 +28,10 @@ const listFilterWhereClause = `
     @keyword = ''
     OR title LIKE '%' || @keyword || '%'
     OR project LIKE '%' || @keyword || '%'
+    OR tags LIKE '%' || @keyword || '%'
   )
+  AND (@priority = '' OR priority = @priority)
+  AND (@status = '' OR status = @status)
   AND (@due_from = '' OR (due_date IS NOT NULL AND due_date >= @due_from))
   AND (@due_to = '' OR (due_date IS NOT NULL AND due_date <= @due_to))
 `;
@@ -68,6 +75,9 @@ const createTablesSQL = `
     project TEXT NOT NULL DEFAULT '默认项目',
     due_date TEXT,
     parent_id INTEGER,
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+    status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'blocked')),
+    tags TEXT NOT NULL DEFAULT '[]',
     completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
@@ -126,12 +136,26 @@ if (!tableColumns.has("parent_id")) {
   db.exec(`ALTER TABLE todos ADD COLUMN parent_id INTEGER;`);
 }
 
+if (!tableColumns.has("priority")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium';`);
+}
+
+if (!tableColumns.has("status")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN status TEXT NOT NULL DEFAULT 'todo';`);
+}
+
+if (!tableColumns.has("tags")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';`);
+}
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos (user_id);
   CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos (completed);
   CREATE INDEX IF NOT EXISTS idx_todos_project ON todos (project);
   CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos (due_date);
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
+  CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos (priority);
+  CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
   CREATE INDEX IF NOT EXISTS idx_users_verify_token_hash ON users (verify_token_hash);
   CREATE INDEX IF NOT EXISTS idx_users_reset_token_hash ON users (reset_token_hash);
 `);
@@ -248,8 +272,12 @@ const claimUnownedTodosQuery = db.prepare(`
   WHERE user_id IS NULL
 `);
 
+const todoSelectColumns = `
+  id, title, project, due_date, parent_id, priority, status, tags, completed, created_at, completed_at
+`;
+
 const listTodosCreatedDescQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE ${listFilterWhereWithScopeClause}
   ORDER BY id DESC
@@ -257,7 +285,7 @@ const listTodosCreatedDescQuery = db.prepare(`
 `);
 
 const listTodosCreatedAscQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE ${listFilterWhereWithScopeClause}
   ORDER BY id ASC
@@ -265,7 +293,7 @@ const listTodosCreatedAscQuery = db.prepare(`
 `);
 
 const listTodosDueAscQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE ${listFilterWhereWithScopeClause}
   ORDER BY
@@ -276,7 +304,7 @@ const listTodosDueAscQuery = db.prepare(`
 `);
 
 const listTodosDueDescQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE ${listFilterWhereWithScopeClause}
   ORDER BY
@@ -303,8 +331,8 @@ const countDueSnapshotQuery = db.prepare(`
 `);
 
 const createTodoQuery = db.prepare(`
-  INSERT INTO todos (user_id, title, project, due_date, parent_id)
-  VALUES (@user_id, @title, @project, @due_date, @parent_id)
+  INSERT INTO todos (user_id, title, project, due_date, parent_id, priority, status, tags)
+  VALUES (@user_id, @title, @project, @due_date, @parent_id, @priority, @status, @tags)
 `);
 
 const updateTodoQuery = db.prepare(`
@@ -313,12 +341,15 @@ const updateTodoQuery = db.prepare(`
     title = @title,
     project = @project,
     due_date = @due_date,
-    parent_id = @parent_id
+    parent_id = @parent_id,
+    priority = @priority,
+    status = @status,
+    tags = @tags
   WHERE id = @id AND user_id = @user_id
 `);
 
 const getTodoByIdQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE id = @id AND user_id = @user_id
 `);
@@ -335,7 +366,10 @@ const updateTodoProjectDueQuery = db.prepare(`
   UPDATE todos
   SET
     project = @project,
-    due_date = @due_date
+    due_date = @due_date,
+    priority = @priority,
+    status = @status,
+    tags = @tags
   WHERE id = @id AND user_id = @user_id
 `);
 
@@ -397,7 +431,7 @@ const countCompletedTodosQuery = db.prepare(`
 `);
 
 const listParentCandidatesQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE completed = 0 AND user_id = @user_id
   ORDER BY id DESC
@@ -412,20 +446,28 @@ const listProjectsQuery = db.prepare(`
 `);
 
 const listTodosByUserRawQuery = db.prepare(`
-  SELECT id, title, project, due_date, parent_id, completed, created_at, completed_at
+  SELECT ${todoSelectColumns}
   FROM todos
   WHERE user_id = @user_id
   ORDER BY id ASC
 `);
 
 const insertTodoRawQuery = db.prepare(`
-  INSERT INTO todos (id, user_id, title, project, due_date, parent_id, completed, created_at, completed_at)
-  VALUES (@id, @user_id, @title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
+  INSERT INTO todos (
+    id, user_id, title, project, due_date, parent_id, priority, status, tags, completed, created_at, completed_at
+  )
+  VALUES (
+    @id, @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @tags, @completed, @created_at, @completed_at
+  )
 `);
 
 const insertImportedTodoQuery = db.prepare(`
-  INSERT INTO todos (user_id, title, project, due_date, parent_id, completed, created_at, completed_at)
-  VALUES (@user_id, @title, @project, @due_date, @parent_id, @completed, @created_at, @completed_at)
+  INSERT INTO todos (
+    user_id, title, project, due_date, parent_id, priority, status, tags, completed, created_at, completed_at
+  )
+  VALUES (
+    @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @tags, @completed, @created_at, @completed_at
+  )
 `);
 
 const updateImportedParentQuery = db.prepare(`
@@ -435,17 +477,114 @@ const updateImportedParentQuery = db.prepare(`
 `);
 
 function mapTodo(row) {
+  const priority = normalizeTodoPriority(row.priority);
+  const status = normalizeTodoStatus(row.status);
+  const tags = parseTodoTags(row.tags);
   return {
     ...row,
+    priority,
+    status,
+    tags,
     completed: Boolean(row.completed),
   };
 }
 
 function mapRawTodo(row) {
+  const priority = normalizeTodoPriority(row.priority);
+  const status = normalizeTodoStatus(row.status);
+  const tags = stringifyTodoTags(parseTodoTags(row.tags));
   return {
     ...row,
+    priority,
+    status,
+    tags,
     completed: Number(row.completed || 0),
   };
+}
+
+function normalizeTodoPriority(rawPriority) {
+  const value = String(rawPriority || DEFAULT_TODO_PRIORITY).trim().toLowerCase();
+  return TODO_PRIORITY_VALUES.has(value) ? value : DEFAULT_TODO_PRIORITY;
+}
+
+function normalizeOptionalTodoPriority(rawPriority) {
+  const value = String(rawPriority || "").trim().toLowerCase();
+  if (!value) {
+    return "";
+  }
+  return TODO_PRIORITY_VALUES.has(value) ? value : "";
+}
+
+function normalizeTodoStatus(rawStatus) {
+  const value = String(rawStatus || DEFAULT_TODO_STATUS).trim().toLowerCase();
+  return TODO_STATUS_VALUES.has(value) ? value : DEFAULT_TODO_STATUS;
+}
+
+function normalizeOptionalTodoStatus(rawStatus) {
+  const value = String(rawStatus || "").trim().toLowerCase();
+  if (!value) {
+    return "";
+  }
+  return TODO_STATUS_VALUES.has(value) ? value : "";
+}
+
+function normalizeTodoTags(rawTags) {
+  if (rawTags === null || rawTags === undefined) {
+    return [];
+  }
+
+  let source = [];
+  if (Array.isArray(rawTags)) {
+    source = rawTags;
+  } else if (typeof rawTags === "string") {
+    const text = rawTags.trim();
+    if (!text) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      source = Array.isArray(parsed) ? parsed : text.split(",");
+    } catch (_error) {
+      source = text.split(",");
+    }
+  } else {
+    source = [rawTags];
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const value of source) {
+    const next = String(value || "")
+      .trim()
+      .replace(/^#/, "")
+      .slice(0, 20);
+
+    if (!next) {
+      continue;
+    }
+
+    const key = next.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(next);
+    if (deduped.length >= 20) {
+      break;
+    }
+  }
+
+  return deduped;
+}
+
+function parseTodoTags(rawTags) {
+  return normalizeTodoTags(rawTags);
+}
+
+function stringifyTodoTags(tags) {
+  return JSON.stringify(normalizeTodoTags(tags));
 }
 
 function isValidDateString(value) {
@@ -492,6 +631,8 @@ function normalizeListOptions(options = "all") {
     filter: "all",
     project: "",
     keyword: "",
+    priority: "",
+    status: "",
     dueFrom: "",
     dueTo: "",
     sort: "created_desc",
@@ -523,6 +664,8 @@ function normalizeListOptions(options = "all") {
     filter: String(merged.filter || "all"),
     project: String(merged.project || "").trim(),
     keyword: String(merged.keyword || "").trim(),
+    priority: normalizeOptionalTodoPriority(merged.priority),
+    status: normalizeOptionalTodoStatus(merged.status),
     due_from: String(merged.dueFrom || "").trim(),
     due_to: String(merged.dueTo || "").trim(),
     sort: String(merged.sort || "created_desc"),
@@ -579,11 +722,23 @@ function listTodos(options = "all") {
   };
 }
 
-function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: rawDueDate, parentId, userId }) {
+function normalizeTodoPayload({
+  title: rawTitle,
+  project: rawProject,
+  dueDate: rawDueDate,
+  parentId,
+  priority: rawPriority,
+  status: rawStatus,
+  tags: rawTags,
+  userId,
+}) {
   const title = String(rawTitle || "").trim();
   const project = String(rawProject || "").trim() || "默认项目";
   const dueDate = rawDueDate ? String(rawDueDate).trim() : null;
   const parentIdValue = Number.isInteger(parentId) && parentId > 0 ? parentId : null;
+  const priority = normalizeTodoPriority(rawPriority);
+  const status = normalizeTodoStatus(rawStatus);
+  const tags = stringifyTodoTags(rawTags);
 
   return {
     user_id: requireUserId(userId),
@@ -591,6 +746,9 @@ function normalizeTodoPayload({ title: rawTitle, project: rawProject, dueDate: r
     project,
     due_date: dueDate || null,
     parent_id: parentIdValue,
+    priority,
+    status,
+    tags,
   };
 }
 
@@ -617,6 +775,9 @@ function restoreSnapshot(userId, snapshotRows) {
         project: String(row.project || "默认项目"),
         due_date: row.due_date ? String(row.due_date) : null,
         parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
+        priority: normalizeTodoPriority(row.priority),
+        status: normalizeTodoStatus(row.status),
+        tags: stringifyTodoTags(row.tags),
         completed: Number(row.completed ? 1 : 0),
         created_at: String(row.created_at || new Date().toISOString()),
         completed_at: row.completed_at ? String(row.completed_at) : null,
@@ -755,7 +916,7 @@ function clearCompletedTodos(userId) {
   return clearCompleted();
 }
 
-function updateTodosBatch(userId, { ids, project, dueDate, completed }) {
+function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, status, tags }) {
   const userIdValue = requireUserId(userId);
   const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
   if (!uniqueIds.length) {
@@ -798,14 +959,26 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed }) {
         continue;
       }
 
-      if (project !== undefined || dueDate !== undefined) {
+      if (
+        project !== undefined ||
+        dueDate !== undefined ||
+        priority !== undefined ||
+        status !== undefined ||
+        tags !== undefined
+      ) {
         const nextProject = project !== undefined ? project : current.project;
         const nextDueDate = dueDate !== undefined ? dueDate : current.due_date;
+        const nextPriority = priority !== undefined ? priority : current.priority;
+        const nextStatus = status !== undefined ? status : current.status;
+        const nextTags = tags !== undefined ? tags : current.tags;
         const updateResult = updateTodoProjectDueQuery.run({
           id,
           user_id: userIdValue,
           project: nextProject,
           due_date: nextDueDate || null,
+          priority: normalizeTodoPriority(nextPriority),
+          status: normalizeTodoStatus(nextStatus),
+          tags: stringifyTodoTags(nextTags),
         });
 
         if (updateResult.changes > 0) {
@@ -861,6 +1034,10 @@ function normalizeImportItem(rawItem, index) {
     throw new Error(`items[${index}].dueDate must be YYYY-MM-DD`);
   }
 
+  const priority = normalizeTodoPriority(rawItem?.priority);
+  const status = normalizeTodoStatus(rawItem?.status);
+  const tags = stringifyTodoTags(rawItem?.tags);
+
   const completed = Boolean(rawItem?.completed);
   const createdAt = String(rawItem?.created_at || rawItem?.createdAt || new Date().toISOString());
   const completedAt = completed
@@ -876,6 +1053,9 @@ function normalizeImportItem(rawItem, index) {
     title,
     project,
     due_date: dueDate,
+    priority,
+    status,
+    tags,
     completed: Number(completed),
     created_at: createdAt,
     completed_at: completedAt,
@@ -903,6 +1083,9 @@ function importTodos(userId, { items, mode = "merge" }) {
         project: row.project,
         due_date: row.due_date,
         parent_id: null,
+        priority: row.priority,
+        status: row.status,
+        tags: row.tags,
         completed: row.completed,
         created_at: row.created_at,
         completed_at: row.completed ? row.completed_at : null,
@@ -943,6 +1126,9 @@ function exportTodos(userId) {
     project: String(row.project || "默认项目"),
     due_date: row.due_date ? String(row.due_date) : null,
     parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
+    priority: normalizeTodoPriority(row.priority),
+    status: normalizeTodoStatus(row.status),
+    tags: parseTodoTags(row.tags),
     completed: Boolean(row.completed),
     created_at: String(row.created_at || ""),
     completed_at: row.completed_at ? String(row.completed_at) : null,

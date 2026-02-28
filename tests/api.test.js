@@ -145,6 +145,72 @@ describe("Todos API", () => {
     }
   });
 
+  test("priority status tags and filters", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+
+    const first = await createTodo(request, {
+      title: "Release Checklist",
+      priority: "high",
+      status: "blocked",
+      tags: ["紧急", "后端", "后端"],
+    });
+    assert.equal(first.priority, "high");
+    assert.equal(first.status, "blocked");
+    assert.deepEqual(first.tags, ["紧急", "后端"]);
+
+    const second = await createTodo(request, {
+      title: "Routine Cleanup",
+      priority: "low",
+      status: "todo",
+      tags: "维护,ops",
+    });
+    assert.equal(second.priority, "low");
+    assert.equal(second.status, "todo");
+    assert.deepEqual(second.tags, ["维护", "ops"]);
+
+    const byPriority = await listTodos(request, { priority: "high" });
+    assert.equal(byPriority.items.length, 1);
+    assert.equal(byPriority.items[0].id, first.id);
+
+    const byStatus = await listTodos(request, { status: "blocked" });
+    assert.equal(byStatus.items.length, 1);
+    assert.equal(byStatus.items[0].id, first.id);
+
+    const patched = await request.patch(`/api/todos/${first.id}`).send({
+      priority: "medium",
+      status: "in_progress",
+      tags: ["联调", "本周"],
+    });
+    assert.equal(patched.status, 200);
+    assert.equal(patched.body.priority, "medium");
+    assert.equal(patched.body.status, "in_progress");
+    assert.deepEqual(patched.body.tags, ["联调", "本周"]);
+
+    const batchRes = await request.post("/api/todos/batch").send({
+      ids: [first.id, second.id],
+      priority: "high",
+      status: "in_progress",
+      tags: ["批量", "统一"],
+    });
+    assert.equal(batchRes.status, 200);
+    assert.equal(batchRes.body.count, 2);
+
+    const inProgress = await listTodos(request, { status: "in_progress" });
+    assert.equal(inProgress.items.length, 2);
+    for (const item of inProgress.items) {
+      assert.equal(item.priority, "high");
+      assert.equal(item.status, "in_progress");
+      assert.deepEqual(item.tags, ["批量", "统一"]);
+    }
+
+    const exportRes = await request.get("/api/todos/export");
+    assert.equal(exportRes.status, 200);
+    assert.ok(Array.isArray(exportRes.body.items[0].tags));
+    assert.ok(["high", "medium", "low"].includes(exportRes.body.items[0].priority));
+    assert.ok(["todo", "in_progress", "blocked"].includes(exportRes.body.items[0].status));
+  });
+
   test("hierarchy rules", async () => {
     const request = createTestRequest();
     await registerAndLogin(request);

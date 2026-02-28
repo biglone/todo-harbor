@@ -6,6 +6,7 @@
 ## 功能
 
 - 新增待办事项（支持填写项目、到期日期、父任务）
+- 任务属性支持：`优先级 / 状态 / 标签`
 - 新增区支持 `单条录入 / 批量录入` 两种模式
 - 切换完成/未完成状态
 - 按 `全部 / 进行中 / 已完成` 过滤
@@ -110,7 +111,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - `GET /api/account`（账号信息）
 - `POST /api/account/email`（修改邮箱，需当前密码）
 - `POST /api/account/password`（修改密码）
-- `GET /api/todos?filter=all|active|completed&q=&project=&dueFrom=YYYY-MM-DD&dueTo=YYYY-MM-DD&sort=created_desc|created_asc|due_asc|due_desc&dueScope=all|overdue|today|week|no_due&page=1&pageSize=60`
+- `GET /api/todos?filter=all|active|completed&q=&project=&priority=low|medium|high&status=todo|in_progress|blocked&dueFrom=YYYY-MM-DD&dueTo=YYYY-MM-DD&sort=created_desc|created_asc|due_asc|due_desc&dueScope=all|overdue|today|week|no_due&page=1&pageSize=60`
   - 返回 `pagination`（分页信息）与 `dueSnapshot`（到期分布快照）
 - `GET /api/todos/meta`（返回项目列表、可选父任务、undo 可用状态）
 - `GET /api/todos/export`（导出 JSON）
@@ -119,16 +120,25 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `project?: string`（可选，默认 `默认项目`）
   - `dueDate?: YYYY-MM-DD`（可选）
   - `parentId?: number`（可选，表示创建子任务）
+  - `priority?: low|medium|high`（可选，默认 `medium`）
+  - `status?: todo|in_progress|blocked`（可选，默认 `todo`）
+  - `tags?: string[] | "a,b,c"`（可选）
 - `POST /api/todos/bulk`（批量创建）
   - `titles: string[]`（必填，每个元素是一条任务标题）
   - `project?: string`
   - `dueDate?: YYYY-MM-DD`
   - `parentId?: number`
+  - `priority?: low|medium|high`
+  - `status?: todo|in_progress|blocked`
+  - `tags?: string[] | "a,b,c"`
 - `POST /api/todos/batch`（批量更新当前任务集合）
   - `ids: number[]`（必填）
   - `completed?: boolean`
   - `project?: string`
   - `dueDate?: YYYY-MM-DD | null`
+  - `priority?: low|medium|high`
+  - `status?: todo|in_progress|blocked`
+  - `tags?: string[] | "a,b,c"`
   - 响应包含 `count` 与 `skipped`（例如批量完成时会跳过仍有未完成子任务的父任务）
 - `POST /api/todos/import`
   - body 支持 `{"mode":"merge"|"replace","items":[...]}` 或直接传数组

@@ -684,7 +684,9 @@ button {
 }
 
 #projectFilterSelect,
-#sortSelect {
+#sortSelect,
+#priorityFilterSelect,
+#statusFilterSelect {
   flex: 1 1 140px;
   min-width: 136px;
 }
@@ -1024,6 +1026,48 @@ button {
   background: rgba(226, 245, 242, 0.82);
   border-color: rgba(10, 127, 116, 0.25);
   color: #0c6e64;
+}
+
+.tag-priority.is-high {
+  background: rgba(251, 232, 231, 0.94);
+  border-color: rgba(183, 61, 52, 0.3);
+  color: #9a2e28;
+}
+
+.tag-priority.is-medium {
+  background: rgba(250, 239, 226, 0.9);
+  border-color: rgba(197, 128, 89, 0.28);
+  color: #7a4a2a;
+}
+
+.tag-priority.is-low {
+  background: rgba(231, 246, 242, 0.95);
+  border-color: rgba(10, 127, 116, 0.3);
+  color: #0c6e64;
+}
+
+.tag-status.is-todo {
+  background: rgba(234, 240, 255, 0.9);
+  border-color: rgba(63, 95, 164, 0.28);
+  color: #274881;
+}
+
+.tag-status.is-in_progress {
+  background: rgba(235, 241, 255, 0.95);
+  border-color: rgba(63, 95, 164, 0.3);
+  color: #274881;
+}
+
+.tag-status.is-blocked {
+  background: rgba(255, 238, 218, 0.95);
+  border-color: rgba(217, 130, 52, 0.32);
+  color: #8a4b08;
+}
+
+.tag-label {
+  background: rgba(236, 247, 243, 0.9);
+  border-color: rgba(10, 127, 116, 0.26);
+  color: #0b655b;
 }
 
 .todo-title {
