@@ -1064,6 +1064,12 @@ button {
   color: #8a4b08;
 }
 
+.tag-recurrence {
+  background: rgba(244, 236, 255, 0.92);
+  border-color: rgba(120, 82, 188, 0.28);
+  color: #5b3b9a;
+}
+
 .tag-label {
   background: rgba(236, 247, 243, 0.9);
   border-color: rgba(10, 127, 116, 0.26);

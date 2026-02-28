@@ -46,6 +46,7 @@ const VALID_SORTS = new Set(["created_desc", "created_asc", "due_asc", "due_desc
 const VALID_DUE_SCOPES = new Set(["all", "overdue", "today", "week", "no_due"]);
 const VALID_PRIORITIES = new Set(["low", "medium", "high"]);
 const VALID_STATUSES = new Set(["todo", "in_progress", "blocked"]);
+const VALID_RECURRENCES = new Set(["none", "daily", "weekly", "monthly"]);
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
 const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
@@ -926,6 +927,16 @@ function parseTodoInput(body, userId, { titleRequired = true } = {}) {
     return { error: "status must be one of: todo, in_progress, blocked" };
   }
 
+  const recurrence = String(body?.recurrence || "none")
+    .trim()
+    .toLowerCase();
+  if (!VALID_RECURRENCES.has(recurrence)) {
+    return { error: "recurrence must be one of: none, daily, weekly, monthly" };
+  }
+  if (recurrence !== "none" && !dueDateRaw) {
+    return { error: "dueDate is required when recurrence is enabled" };
+  }
+
   const parsedTags = parseTodoTagsInput(body?.tags);
   if (parsedTags.error) {
     return parsedTags;
@@ -956,6 +967,7 @@ function parseTodoInput(body, userId, { titleRequired = true } = {}) {
       parentId,
       priority,
       status,
+      recurrence,
       tags: parsedTags.value,
     },
   };
@@ -1035,6 +1047,7 @@ function parseTodoUpdateInput(body, userId, existingTodo) {
     parentId: body?.parentId !== undefined ? body?.parentId : existingTodo.parent_id,
     priority: body?.priority ?? existingTodo.priority,
     status: body?.status ?? existingTodo.status,
+    recurrence: body?.recurrence ?? existingTodo.recurrence,
     tags: body?.tags !== undefined ? body?.tags : existingTodo.tags,
   };
 
@@ -1223,6 +1236,31 @@ app.post("/api/todos/batch", (req, res) => {
     hasOperation = true;
   }
 
+  if (req.body?.recurrence !== undefined) {
+    const recurrence = String(req.body.recurrence || "")
+      .trim()
+      .toLowerCase();
+    if (!VALID_RECURRENCES.has(recurrence)) {
+      return res.status(400).json({
+        error: "recurrence must be one of: none, daily, weekly, monthly",
+      });
+    }
+    if (recurrence !== "none") {
+      if (req.body?.dueDate === undefined) {
+        return res.status(400).json({
+          error: "dueDate is required when setting recurrence in batch",
+        });
+      }
+      if (payload.dueDate === null || !payload.dueDate) {
+        return res.status(400).json({
+          error: "dueDate cannot be empty when recurrence is enabled",
+        });
+      }
+    }
+    payload.recurrence = recurrence;
+    hasOperation = true;
+  }
+
   if (req.body?.tags !== undefined) {
     const parsedTags = parseTodoTagsInput(req.body.tags);
     if (parsedTags.error) {
@@ -1236,7 +1274,8 @@ app.post("/api/todos/batch", (req, res) => {
 
   if (!hasOperation) {
     return res.status(400).json({
-      error: "At least one operation is required: completed, project, dueDate, priority, status, or tags",
+      error:
+        "At least one operation is required: completed, project, dueDate, priority, status, recurrence, or tags",
     });
   }
 

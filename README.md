@@ -7,6 +7,7 @@
 
 - 新增待办事项（支持填写项目、到期日期、父任务）
 - 任务属性支持：`优先级 / 状态 / 标签`
+- 周期任务（每天/每周/每月），完成后自动生成下一期任务
 - 新增区支持 `单条录入 / 批量录入` 两种模式
 - 切换完成/未完成状态
 - 按 `全部 / 进行中 / 已完成` 过滤
@@ -122,6 +123,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `parentId?: number`（可选，表示创建子任务）
   - `priority?: low|medium|high`（可选，默认 `medium`）
   - `status?: todo|in_progress|blocked`（可选，默认 `todo`）
+  - `recurrence?: none|daily|weekly|monthly`（可选，默认 `none`；启用时需提供 `dueDate`）
   - `tags?: string[] | "a,b,c"`（可选）
 - `POST /api/todos/bulk`（批量创建）
   - `titles: string[]`（必填，每个元素是一条任务标题）
@@ -130,6 +132,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `parentId?: number`
   - `priority?: low|medium|high`
   - `status?: todo|in_progress|blocked`
+  - `recurrence?: none|daily|weekly|monthly`
   - `tags?: string[] | "a,b,c"`
 - `POST /api/todos/batch`（批量更新当前任务集合）
   - `ids: number[]`（必填）
@@ -138,6 +141,7 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `dueDate?: YYYY-MM-DD | null`
   - `priority?: low|medium|high`
   - `status?: todo|in_progress|blocked`
+  - `recurrence?: none|daily|weekly|monthly`（设置为非 `none` 时需同时传 `dueDate`）
   - `tags?: string[] | "a,b,c"`
   - 响应包含 `count` 与 `skipped`（例如批量完成时会跳过仍有未完成子任务的父任务）
 - `POST /api/todos/import`
@@ -145,10 +149,11 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
   - `replace` 会先清空现有数据
   - 单次导入最多 5000 条
 - `POST /api/todos/undo`（撤销最近一步变更，可连续调用实现多步撤销）
-- `PATCH /api/todos/:id`（编辑任务标题/项目/到期日期/父任务）
+- `PATCH /api/todos/:id`（编辑任务标题/项目/到期日期/父任务/优先级/状态/周期/标签）
 - `DELETE /api/todos/:id`（删除任务，含其子任务）
 - `DELETE /api/todos/completed`（清理全部已完成任务）
 - `PATCH /api/todos/:id/toggle`
+  - 若任务设置了 `recurrence`，标记完成时会自动创建下一期未完成任务
 
 ## 日志规范
 

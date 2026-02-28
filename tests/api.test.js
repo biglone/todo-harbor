@@ -26,6 +26,15 @@ function dateOffset(days) {
   return formatDateForInput(date);
 }
 
+function shiftDate(dateString, days) {
+  const [year, month, day] = String(dateString || "")
+    .split("-")
+    .map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  return formatDateForInput(date);
+}
+
 function createTestRequest({ env = {} } = {}) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const dataDir = path.join(os.tmpdir(), `todo-harbor-test-${id}`);
@@ -216,6 +225,46 @@ describe("Todos API", () => {
     assert.ok(Array.isArray(exportRes.body.items[0].tags));
     assert.ok(["high", "medium", "low"].includes(exportRes.body.items[0].priority));
     assert.ok(["todo", "in_progress", "blocked"].includes(exportRes.body.items[0].status));
+  });
+
+  test("recurring todo generates next occurrence on completion", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+
+    const dueDate = dateOffset(2);
+    const recurring = await createTodo(request, {
+      title: "Daily standup",
+      dueDate,
+      recurrence: "daily",
+      status: "in_progress",
+    });
+    assert.equal(recurring.recurrence, "daily");
+    assert.equal(recurring.due_date, dueDate);
+
+    const badCreate = await request.post("/api/todos").send({
+      title: "Broken recurring",
+      recurrence: "weekly",
+    });
+    assert.equal(badCreate.status, 400);
+
+    const toggle = await request.patch(`/api/todos/${recurring.id}/toggle`);
+    assert.equal(toggle.status, 200);
+    assert.equal(toggle.body.completed, true);
+
+    const all = await listTodos(request, { sort: "created_asc" });
+    assert.equal(all.items.length, 2);
+
+    const previous = all.items.find((item) => item.id === recurring.id);
+    assert.ok(previous);
+    assert.equal(previous.completed, true);
+    assert.equal(previous.recurrence, "daily");
+
+    const next = all.items.find((item) => item.id !== recurring.id);
+    assert.ok(next);
+    assert.equal(next.completed, false);
+    assert.equal(next.recurrence, "daily");
+    assert.equal(next.status, "todo");
+    assert.equal(next.due_date, shiftDate(dueDate, 1));
   });
 
   test("hierarchy rules", async () => {

@@ -48,6 +48,7 @@ const dueDateInputEl = document.getElementById("dueDateInput");
 const parentSelectEl = document.getElementById("parentSelect");
 const priorityInputEl = document.getElementById("priorityInput");
 const statusInputEl = document.getElementById("statusInput");
+const recurrenceInputEl = document.getElementById("recurrenceInput");
 const tagsInputEl = document.getElementById("tagsInput");
 const projectSuggestionsEl = document.getElementById("projectSuggestions");
 const projectChipsEl = document.getElementById("projectChips");
@@ -62,6 +63,7 @@ const summaryCountEl = document.getElementById("summaryCount");
 const summaryProjectEl = document.getElementById("summaryProject");
 const summaryDateEl = document.getElementById("summaryDate");
 const summaryParentEl = document.getElementById("summaryParent");
+const summaryRecurrenceEl = document.getElementById("summaryRecurrence");
 const summaryHintEl = document.getElementById("summaryHint");
 
 const countAllEl = document.getElementById("countAll");
@@ -235,6 +237,9 @@ function setBusy(nextBusy) {
   }
   if (statusFilterSelectEl) {
     statusFilterSelectEl.disabled = locked;
+  }
+  if (recurrenceInputEl) {
+    recurrenceInputEl.disabled = locked;
   }
   if (resetQueryButtonEl) {
     resetQueryButtonEl.disabled = locked;
@@ -506,6 +511,16 @@ function formatStatusLabel(status) {
   return labelMap[status] || "待开始";
 }
 
+function formatRecurrenceLabel(recurrence) {
+  const labelMap = {
+    none: "不重复",
+    daily: "每天",
+    weekly: "每周",
+    monthly: "每月",
+  };
+  return labelMap[recurrence] || "不重复";
+}
+
 function parseTagsText(value) {
   const source = Array.isArray(value) ? value : String(value || "").split(",");
   const deduped = [];
@@ -571,6 +586,7 @@ function renderComposerActionButtons() {
 function updateComposerSummary() {
   const project = projectInputEl.value.trim() || "默认项目";
   const dueDate = dueDateInputEl.value;
+  const recurrence = recurrenceInputEl ? recurrenceInputEl.value : "none";
   const parentText = parentSelectEl.value
     ? parentSelectEl.options[parentSelectEl.selectedIndex]?.textContent || "顶级任务"
     : "顶级任务";
@@ -584,6 +600,9 @@ function updateComposerSummary() {
   summaryProjectEl.textContent = project;
   summaryDateEl.textContent = dueDate ? formatDateOnly(dueDate) : "未设置到期日";
   summaryParentEl.textContent = parentText;
+  if (summaryRecurrenceEl) {
+    summaryRecurrenceEl.textContent = formatRecurrenceLabel(recurrence);
+  }
 
   if (state.editingTodoId) {
     summaryHintEl.textContent = `正在编辑任务 #${state.editingTodoId}，保存后会覆盖原内容。`;
@@ -734,6 +753,9 @@ function onEditTodo(id) {
   if (statusInputEl) {
     statusInputEl.value = todo.status || "todo";
   }
+  if (recurrenceInputEl) {
+    recurrenceInputEl.value = todo.recurrence || "none";
+  }
   if (tagsInputEl) {
     tagsInputEl.value = Array.isArray(todo.tags) ? todo.tags.join(", ") : "";
   }
@@ -790,6 +812,13 @@ function renderTodoNode(item, depth) {
   statusTag.className = `tag tag-status ${item.status ? `is-${item.status}` : ""}`.trim();
   statusTag.textContent = formatStatusLabel(item.status);
   tagsEl.appendChild(statusTag);
+
+  if (item.recurrence && item.recurrence !== "none") {
+    const recurrenceTag = document.createElement("span");
+    recurrenceTag.className = "tag tag-recurrence";
+    recurrenceTag.textContent = formatRecurrenceLabel(item.recurrence);
+    tagsEl.appendChild(recurrenceTag);
+  }
 
   if (Array.isArray(item.tags)) {
     for (const tag of item.tags) {
@@ -1475,6 +1504,9 @@ function resetComposerFields() {
   if (statusInputEl) {
     statusInputEl.value = "todo";
   }
+  if (recurrenceInputEl) {
+    recurrenceInputEl.value = "none";
+  }
   if (tagsInputEl) {
     tagsInputEl.value = "";
   }
@@ -1490,7 +1522,13 @@ async function onAddTodo(event) {
   const parentId = parentSelectEl.value ? Number(parentSelectEl.value) : null;
   const priority = priorityInputEl ? priorityInputEl.value : "medium";
   const status = statusInputEl ? statusInputEl.value : "todo";
+  const recurrence = recurrenceInputEl ? recurrenceInputEl.value : "none";
   const tags = parseTagsText(tagsInputEl ? tagsInputEl.value : "");
+
+  if (recurrence !== "none" && !dueDate) {
+    setMessage("启用重复周期时请先设置到期日期", true);
+    return;
+  }
 
   setBusy(true);
   setMessage("正在保存...");
@@ -1515,6 +1553,7 @@ async function onAddTodo(event) {
           parentId,
           priority,
           status,
+          recurrence,
           tags,
         }),
       });
@@ -1540,6 +1579,7 @@ async function onAddTodo(event) {
           parentId,
           priority,
           status,
+          recurrence,
           tags,
         }),
       });
@@ -1561,6 +1601,7 @@ async function onAddTodo(event) {
           parentId,
           priority,
           status,
+          recurrence,
           tags,
         }),
       });
@@ -2431,6 +2472,9 @@ if (priorityInputEl) {
 }
 if (statusInputEl) {
   statusInputEl.addEventListener("change", updateComposerSummary);
+}
+if (recurrenceInputEl) {
+  recurrenceInputEl.addEventListener("change", updateComposerSummary);
 }
 if (tagsInputEl) {
   tagsInputEl.addEventListener("input", updateComposerSummary);

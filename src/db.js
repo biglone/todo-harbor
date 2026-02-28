@@ -12,8 +12,10 @@ db.pragma("journal_mode = WAL");
 
 const TODO_PRIORITY_VALUES = new Set(["low", "medium", "high"]);
 const TODO_STATUS_VALUES = new Set(["todo", "in_progress", "blocked"]);
+const TODO_RECURRENCE_VALUES = new Set(["none", "daily", "weekly", "monthly"]);
 const DEFAULT_TODO_PRIORITY = "medium";
 const DEFAULT_TODO_STATUS = "todo";
+const DEFAULT_TODO_RECURRENCE = "none";
 const UNDO_HISTORY_LIMIT = Number(process.env.UNDO_HISTORY_LIMIT || 20);
 
 const listFilterWhereClause = `
@@ -77,6 +79,7 @@ const createTablesSQL = `
     parent_id INTEGER,
     priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
     status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'blocked')),
+    recurrence TEXT NOT NULL DEFAULT 'none' CHECK (recurrence IN ('none', 'daily', 'weekly', 'monthly')),
     tags TEXT NOT NULL DEFAULT '[]',
     completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -155,6 +158,10 @@ if (!tableColumns.has("tags")) {
   db.exec(`ALTER TABLE todos ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';`);
 }
 
+if (!tableColumns.has("recurrence")) {
+  db.exec(`ALTER TABLE todos ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none';`);
+}
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos (user_id);
   CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos (completed);
@@ -163,6 +170,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos (parent_id);
   CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos (priority);
   CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
+  CREATE INDEX IF NOT EXISTS idx_todos_recurrence ON todos (recurrence);
   CREATE INDEX IF NOT EXISTS idx_undo_snapshots_user_id ON undo_snapshots (user_id);
   CREATE INDEX IF NOT EXISTS idx_users_verify_token_hash ON users (verify_token_hash);
   CREATE INDEX IF NOT EXISTS idx_users_reset_token_hash ON users (reset_token_hash);
@@ -281,7 +289,7 @@ const claimUnownedTodosQuery = db.prepare(`
 `);
 
 const todoSelectColumns = `
-  id, title, project, due_date, parent_id, priority, status, tags, completed, created_at, completed_at
+  id, title, project, due_date, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
 `;
 
 const listTodosCreatedDescQuery = db.prepare(`
@@ -339,8 +347,8 @@ const countDueSnapshotQuery = db.prepare(`
 `);
 
 const createTodoQuery = db.prepare(`
-  INSERT INTO todos (user_id, title, project, due_date, parent_id, priority, status, tags)
-  VALUES (@user_id, @title, @project, @due_date, @parent_id, @priority, @status, @tags)
+  INSERT INTO todos (user_id, title, project, due_date, parent_id, priority, status, recurrence, tags)
+  VALUES (@user_id, @title, @project, @due_date, @parent_id, @priority, @status, @recurrence, @tags)
 `);
 
 const updateTodoQuery = db.prepare(`
@@ -352,6 +360,7 @@ const updateTodoQuery = db.prepare(`
     parent_id = @parent_id,
     priority = @priority,
     status = @status,
+    recurrence = @recurrence,
     tags = @tags
   WHERE id = @id AND user_id = @user_id
 `);
@@ -377,6 +386,7 @@ const updateTodoProjectDueQuery = db.prepare(`
     due_date = @due_date,
     priority = @priority,
     status = @status,
+    recurrence = @recurrence,
     tags = @tags
   WHERE id = @id AND user_id = @user_id
 `);
@@ -462,19 +472,19 @@ const listTodosByUserRawQuery = db.prepare(`
 
 const insertTodoRawQuery = db.prepare(`
   INSERT INTO todos (
-    id, user_id, title, project, due_date, parent_id, priority, status, tags, completed, created_at, completed_at
+    id, user_id, title, project, due_date, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
   )
   VALUES (
-    @id, @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @tags, @completed, @created_at, @completed_at
+    @id, @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @recurrence, @tags, @completed, @created_at, @completed_at
   )
 `);
 
 const insertImportedTodoQuery = db.prepare(`
   INSERT INTO todos (
-    user_id, title, project, due_date, parent_id, priority, status, tags, completed, created_at, completed_at
+    user_id, title, project, due_date, parent_id, priority, status, recurrence, tags, completed, created_at, completed_at
   )
   VALUES (
-    @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @tags, @completed, @created_at, @completed_at
+    @user_id, @title, @project, @due_date, @parent_id, @priority, @status, @recurrence, @tags, @completed, @created_at, @completed_at
   )
 `);
 
@@ -522,11 +532,13 @@ const deleteUndoSnapshotByIdQuery = db.prepare(`
 function mapTodo(row) {
   const priority = normalizeTodoPriority(row.priority);
   const status = normalizeTodoStatus(row.status);
+  const recurrence = normalizeTodoRecurrence(row.recurrence);
   const tags = parseTodoTags(row.tags);
   return {
     ...row,
     priority,
     status,
+    recurrence,
     tags,
     completed: Boolean(row.completed),
   };
@@ -535,11 +547,13 @@ function mapTodo(row) {
 function mapRawTodo(row) {
   const priority = normalizeTodoPriority(row.priority);
   const status = normalizeTodoStatus(row.status);
+  const recurrence = normalizeTodoRecurrence(row.recurrence);
   const tags = stringifyTodoTags(parseTodoTags(row.tags));
   return {
     ...row,
     priority,
     status,
+    recurrence,
     tags,
     completed: Number(row.completed || 0),
   };
@@ -569,6 +583,13 @@ function normalizeOptionalTodoStatus(rawStatus) {
     return "";
   }
   return TODO_STATUS_VALUES.has(value) ? value : "";
+}
+
+function normalizeTodoRecurrence(rawRecurrence) {
+  const value = String(rawRecurrence || DEFAULT_TODO_RECURRENCE)
+    .trim()
+    .toLowerCase();
+  return TODO_RECURRENCE_VALUES.has(value) ? value : DEFAULT_TODO_RECURRENCE;
 }
 
 function normalizeTodoTags(rawTags) {
@@ -659,6 +680,43 @@ function getDateAfterDaysString(days) {
   const date = new Date();
   date.setDate(date.getDate() + days);
   return formatDateForInput(date);
+}
+
+function addDaysToDateString(dateString, days) {
+  const [year, month, day] = String(dateString || "")
+    .split("-")
+    .map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  return formatDateForInput(date);
+}
+
+function addMonthsToDateString(dateString, months) {
+  const [year, month, day] = String(dateString || "")
+    .split("-")
+    .map(Number);
+
+  const targetYearMonthDate = new Date(year, month - 1 + months, 1);
+  const lastDay = new Date(targetYearMonthDate.getFullYear(), targetYearMonthDate.getMonth() + 1, 0).getDate();
+  const targetDay = Math.min(day, lastDay);
+  return formatDateForInput(new Date(targetYearMonthDate.getFullYear(), targetYearMonthDate.getMonth(), targetDay));
+}
+
+function getNextRecurringDueDate(dueDate, recurrence) {
+  const normalizedRecurrence = normalizeTodoRecurrence(recurrence);
+  if (!dueDate || !isValidDateString(dueDate) || normalizedRecurrence === "none") {
+    return null;
+  }
+
+  if (normalizedRecurrence === "daily") {
+    return addDaysToDateString(dueDate, 1);
+  }
+
+  if (normalizedRecurrence === "weekly") {
+    return addDaysToDateString(dueDate, 7);
+  }
+
+  return addMonthsToDateString(dueDate, 1);
 }
 
 function requireUserId(rawUserId) {
@@ -772,6 +830,7 @@ function normalizeTodoPayload({
   parentId,
   priority: rawPriority,
   status: rawStatus,
+  recurrence: rawRecurrence,
   tags: rawTags,
   userId,
 }) {
@@ -781,6 +840,7 @@ function normalizeTodoPayload({
   const parentIdValue = Number.isInteger(parentId) && parentId > 0 ? parentId : null;
   const priority = normalizeTodoPriority(rawPriority);
   const status = normalizeTodoStatus(rawStatus);
+  const recurrence = normalizeTodoRecurrence(rawRecurrence);
   const tags = stringifyTodoTags(rawTags);
 
   return {
@@ -791,6 +851,7 @@ function normalizeTodoPayload({
     parent_id: parentIdValue,
     priority,
     status,
+    recurrence,
     tags,
   };
 }
@@ -834,6 +895,7 @@ function restoreSnapshot(userId, snapshotRows) {
         parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
         priority: normalizeTodoPriority(row.priority),
         status: normalizeTodoStatus(row.status),
+        recurrence: normalizeTodoRecurrence(row.recurrence),
         tags: stringifyTodoTags(row.tags),
         completed: Number(row.completed ? 1 : 0),
         created_at: String(row.created_at || new Date().toISOString()),
@@ -877,6 +939,37 @@ function undoLastOperation(userId) {
 function insertTodo(payload) {
   const result = createTodoQuery.run(payload);
   return getTodo(payload.user_id, result.lastInsertRowid);
+}
+
+function createNextRecurringTodo(userId, sourceTodo) {
+  const recurrence = normalizeTodoRecurrence(sourceTodo?.recurrence);
+  if (recurrence === "none") {
+    return null;
+  }
+
+  const nextDueDate = getNextRecurringDueDate(sourceTodo?.due_date, recurrence);
+  if (!nextDueDate) {
+    return null;
+  }
+
+  const parentId =
+    Number.isInteger(sourceTodo?.parent_id) && sourceTodo.parent_id > 0
+      ? Number(sourceTodo.parent_id)
+      : null;
+  const parent = parentId ? getTodo(userId, parentId) : null;
+  const safeParentId = parent && !parent.completed ? parent.id : null;
+
+  return insertTodo({
+    user_id: requireUserId(userId),
+    title: String(sourceTodo?.title || ""),
+    project: String(sourceTodo?.project || "默认项目"),
+    due_date: nextDueDate,
+    parent_id: safeParentId,
+    priority: normalizeTodoPriority(sourceTodo?.priority),
+    status: "todo",
+    recurrence,
+    tags: stringifyTodoTags(sourceTodo?.tags),
+  });
 }
 
 function createTodo(userId, payload) {
@@ -926,6 +1019,10 @@ function toggleTodo(userId, id) {
     completed: Number(nextCompleted),
     completed_at: nextCompleted ? new Date().toISOString() : null,
   });
+
+  if (nextCompleted && !existing.completed) {
+    createNextRecurringTodo(userId, existing);
+  }
 
   return getTodo(userId, id);
 }
@@ -981,7 +1078,7 @@ function clearCompletedTodos(userId) {
   return clearCompleted();
 }
 
-function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, status, tags }) {
+function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, status, recurrence, tags }) {
   const userIdValue = requireUserId(userId);
   const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
   if (!uniqueIds.length) {
@@ -1029,12 +1126,14 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
         dueDate !== undefined ||
         priority !== undefined ||
         status !== undefined ||
+        recurrence !== undefined ||
         tags !== undefined
       ) {
         const nextProject = project !== undefined ? project : current.project;
         const nextDueDate = dueDate !== undefined ? dueDate : current.due_date;
         const nextPriority = priority !== undefined ? priority : current.priority;
         const nextStatus = status !== undefined ? status : current.status;
+        const nextRecurrence = recurrence !== undefined ? recurrence : current.recurrence;
         const nextTags = tags !== undefined ? tags : current.tags;
         const updateResult = updateTodoProjectDueQuery.run({
           id,
@@ -1043,6 +1142,7 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
           due_date: nextDueDate || null,
           priority: normalizeTodoPriority(nextPriority),
           status: normalizeTodoStatus(nextStatus),
+          recurrence: normalizeTodoRecurrence(nextRecurrence),
           tags: stringifyTodoTags(nextTags),
         });
 
@@ -1065,6 +1165,17 @@ function updateTodosBatch(userId, { ids, project, dueDate, completed, priority, 
 
         if (updateResult.changes > 0) {
           updatedIds.add(id);
+        }
+
+        if (completed === true && !current.completed) {
+          createNextRecurringTodo(userIdValue, {
+            ...current,
+            project: project !== undefined ? project : current.project,
+            due_date: dueDate !== undefined ? dueDate || null : current.due_date,
+            priority: priority !== undefined ? priority : current.priority,
+            recurrence: recurrence !== undefined ? recurrence : current.recurrence,
+            tags: tags !== undefined ? tags : current.tags,
+          });
         }
       }
     }
@@ -1101,6 +1212,10 @@ function normalizeImportItem(rawItem, index) {
 
   const priority = normalizeTodoPriority(rawItem?.priority);
   const status = normalizeTodoStatus(rawItem?.status);
+  const recurrence = normalizeTodoRecurrence(rawItem?.recurrence);
+  if (recurrence !== "none" && !dueDate) {
+    throw new Error(`items[${index}].dueDate is required when recurrence is enabled`);
+  }
   const tags = stringifyTodoTags(rawItem?.tags);
 
   const completed = Boolean(rawItem?.completed);
@@ -1120,6 +1235,7 @@ function normalizeImportItem(rawItem, index) {
     due_date: dueDate,
     priority,
     status,
+    recurrence,
     tags,
     completed: Number(completed),
     created_at: createdAt,
@@ -1150,6 +1266,7 @@ function importTodos(userId, { items, mode = "merge" }) {
         parent_id: null,
         priority: row.priority,
         status: row.status,
+        recurrence: row.recurrence,
         tags: row.tags,
         completed: row.completed,
         created_at: row.created_at,
@@ -1193,6 +1310,7 @@ function exportTodos(userId) {
     parent_id: Number.isInteger(row.parent_id) ? row.parent_id : null,
     priority: normalizeTodoPriority(row.priority),
     status: normalizeTodoStatus(row.status),
+    recurrence: normalizeTodoRecurrence(row.recurrence),
     tags: parseTodoTags(row.tags),
     completed: Boolean(row.completed),
     created_at: String(row.created_at || ""),
