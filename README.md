@@ -224,27 +224,38 @@ docker compose ps
 
 说明：数据保存在 `./data`，回滚不会清空数据。
 
-## 自动拉取并重启（push 后自动更新）
+## Push 触发自动部署（无轮询）
 
 项目内已提供：
 
 - 脚本：`scripts/auto-deploy-on-remote-update.sh`
-- systemd 用户级模板：`deploy/systemd/todo-harbor-auto-deploy.service` / `deploy/systemd/todo-harbor-auto-deploy.timer`
+- GitHub Webhook 监听器：`scripts/github-push-webhook.js`
+- systemd 用户级模板：`deploy/systemd/todo-harbor-github-webhook.service`
+- 环境变量模板：`deploy/webhook.env.example`
 
 安装（当前用户）：
 
 ```bash
+mkdir -p ~/.config/todo-harbor
+cp deploy/webhook.env.example ~/.config/todo-harbor/deploy-webhook.env
+# 编辑 deploy-webhook.env，设置 WEBHOOK_SECRET（强随机字符串）
+
 mkdir -p ~/.config/systemd/user
-cp deploy/systemd/todo-harbor-auto-deploy.service ~/.config/systemd/user/
-cp deploy/systemd/todo-harbor-auto-deploy.timer ~/.config/systemd/user/
+cp deploy/systemd/todo-harbor-github-webhook.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now todo-harbor-auto-deploy.timer
+systemctl --user enable --now todo-harbor-github-webhook.service
 ```
+
+然后在 GitHub 仓库配置 Webhook：
+
+- URL：`https://todo-harbor.biglone.tech/webhooks/github/todo-harbor`
+- Content type：`application/json`
+- Secret：与 `WEBHOOK_SECRET` 一致
+- Events：只勾选 `Push`
 
 说明：
 
-- 定时器每分钟检查一次远端 `origin/master`。
-- 若远端有新提交，会自动 `git pull --ff-only`。
-- 当仓库与远端同步且“当前提交”尚未部署时，会执行 `docker compose up -d --build --remove-orphans`。
+- 每次 push 到 `origin/master`，GitHub 会立即回调本机 Webhook。
+- 回调后会执行 `git pull --ff-only` + `docker compose up -d --build --remove-orphans`。
 - 部署状态记录在本地 `.deploy-state/last_deployed_sha`，用于确保每次推送后的新提交只部署一次。
-- 查看日志：`journalctl --user -u todo-harbor-auto-deploy.service -f`
+- Webhook 日志：`journalctl --user -u todo-harbor-github-webhook.service -f`

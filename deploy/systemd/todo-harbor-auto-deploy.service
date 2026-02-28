@@ -1,9 +1,0 @@
-[Unit]
-Description=Todo Harbor auto deploy on remote update
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=/home/Biglone/workspace/todo-harbor
-ExecStart=/home/Biglone/workspace/todo-harbor/scripts/auto-deploy-on-remote-update.sh

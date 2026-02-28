@@ -1,0 +1,15 @@
+[Unit]
+Description=Todo Harbor GitHub push webhook listener
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/Biglone/workspace/todo-harbor
+EnvironmentFile=%h/.config/todo-harbor/deploy-webhook.env
+ExecStart=/usr/bin/env node /home/Biglone/workspace/todo-harbor/scripts/github-push-webhook.js
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=default.target
