@@ -89,6 +89,17 @@ async function registerAndLogin(request, overrides = {}) {
   return { ...loginRes.body, email: created.email, password: created.password };
 }
 
+async function createIntegrationToken(request, overrides = {}) {
+  const payload = {
+    name: overrides.name || "Robot Plan Sync",
+    source: overrides.source || "robotics-dev-career-lab",
+  };
+  const res = await request.post("/api/integrations/tokens").send(payload);
+  assert.equal(res.status, 201);
+  assert.ok(typeof res.body.token === "string");
+  return res.body;
+}
+
 async function createTodo(request, payload) {
   const res = await request.post("/api/todos").send(payload);
   assert.equal(res.status, 201);
@@ -609,5 +620,99 @@ describe("Todos API", () => {
       newPassword: "nextpassword123",
     });
     assert.equal(passUpdate.status, 200);
+  });
+
+  test("integration todos sync supports externalId upsert", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+    const tokenInfo = await createIntegrationToken(request);
+
+    const firstSync = await request
+      .post("/api/integrations/todos/sync")
+      .set("Authorization", `Bearer ${tokenInfo.token}`)
+      .send({
+        source: "robotics-dev-career-lab",
+        defaultProject: "机器人学习计划",
+        items: [
+          {
+            externalId: "week1-day1",
+            title: "Week1 Day1 安装 ROS2 Jazzy",
+            dueDate: dateOffset(0),
+            tags: ["robotics", "week1", "day1"],
+          },
+          {
+            externalId: "week1-day2",
+            title: "Week1 Day2 完成 pub/sub demo",
+            dueDate: dateOffset(1),
+            tags: ["robotics", "week1", "day2"],
+          },
+        ],
+      });
+    assert.equal(firstSync.status, 201);
+    assert.equal(firstSync.body.count, 2);
+    assert.equal(firstSync.body.created, 2);
+    assert.equal(firstSync.body.updated, 0);
+
+    const secondSync = await request
+      .post("/api/integrations/todos/sync")
+      .set("Authorization", `Bearer ${tokenInfo.token}`)
+      .send({
+        source: "robotics-dev-career-lab",
+        defaultProject: "机器人学习计划",
+        items: [
+          {
+            externalId: "week1-day1",
+            title: "Week1 Day1 安装 ROS2 Jazzy（更新）",
+            dueDate: dateOffset(0),
+            tags: ["robotics", "week1", "day1", "updated"],
+          },
+          {
+            externalId: "week1-day3",
+            title: "Week1 Day3 完成 service/action demo",
+            dueDate: dateOffset(2),
+            tags: ["robotics", "week1", "day3"],
+          },
+        ],
+      });
+    assert.equal(secondSync.status, 201);
+    assert.equal(secondSync.body.count, 2);
+    assert.equal(secondSync.body.created, 1);
+    assert.equal(secondSync.body.updated, 1);
+
+    const all = await listTodos(request, { sort: "created_asc" });
+    assert.equal(all.items.length, 3);
+    const updatedDay1 = all.items.find((item) => item.title.includes("Day1"));
+    assert.ok(updatedDay1);
+    assert.equal(updatedDay1.title, "Week1 Day1 安装 ROS2 Jazzy（更新）");
+    assert.equal(updatedDay1.project, "机器人学习计划");
+    assert.deepEqual(updatedDay1.tags, ["robotics", "week1", "day1", "updated"]);
+  });
+
+  test("integration token list and revoke", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+    const tokenInfo = await createIntegrationToken(request, {
+      name: "Career Import",
+      source: "career-lab",
+    });
+
+    const listRes = await request.get("/api/integrations/tokens");
+    assert.equal(listRes.status, 200);
+    assert.ok(Array.isArray(listRes.body.items));
+    assert.equal(listRes.body.items.length, 1);
+    assert.equal(listRes.body.items[0].name, "Career Import");
+    assert.ok(!("token" in listRes.body.items[0]));
+
+    const revokeRes = await request.delete(`/api/integrations/tokens/${tokenInfo.id}`);
+    assert.equal(revokeRes.status, 200);
+
+    const denied = await request
+      .post("/api/integrations/todos/sync")
+      .set("Authorization", `Bearer ${tokenInfo.token}`)
+      .send({
+        source: "career-lab",
+        items: [{ externalId: "task-1", title: "Should fail" }],
+      });
+    assert.equal(denied.status, 401);
   });
 });

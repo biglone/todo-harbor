@@ -123,6 +123,27 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - `GET /api/account`（账号信息）
 - `POST /api/account/email`（修改邮箱，需当前密码）
 - `POST /api/account/password`（修改密码）
+- `GET /api/integrations/tokens`（列出当前账号的外部集成 token，返回脱敏信息）
+- `POST /api/integrations/tokens`（创建外部集成 token，一次性返回明文 token）
+  - `name: string`（必填，<=80）
+  - `source?: string`（可选，默认 `external`；格式：`[a-z0-9._-]`，<=80）
+- `DELETE /api/integrations/tokens/:id`（撤销 token）
+- `POST /api/integrations/todos/sync`（外部系统批量同步 todo，需 Bearer token）
+  - Header: `Authorization: Bearer thk_xxx`
+  - body:
+    - `source?: string`（可选，不传则使用 token 绑定 source）
+    - `defaultProject?: string`（可选，默认使用 `source`）
+    - `items: ExternalTodo[]`（必填，1-1000）
+  - `ExternalTodo` 字段：
+    - `externalId?: string`（可选；建议传，作为幂等键，`source + externalId` 重复提交会更新而不是重复创建）
+    - `title: string`（必填）
+    - `project?: string`
+    - `dueDate?: YYYY-MM-DD`
+    - `reminderAt?: YYYY-MM-DDTHH:mm`
+    - `priority?: low|medium|high`
+    - `status?: todo|in_progress|blocked`
+    - `recurrence?: none|daily|weekly|monthly`
+    - `tags?: string[] | "a,b,c"`
 - `GET /api/todos?filter=all|active|completed&q=&project=&priority=low|medium|high&status=todo|in_progress|blocked&dueFrom=YYYY-MM-DD&dueTo=YYYY-MM-DD&sort=created_desc|created_asc|due_asc|due_desc&dueScope=all|overdue|today|week|no_due&page=1&pageSize=60`
   - 返回 `pagination`（分页信息）与 `dueSnapshot`（到期分布快照）
 - `GET /api/todos/meta`（返回项目列表、可选父任务、undo 可用状态）
@@ -168,6 +189,40 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - `DELETE /api/todos/completed`（清理全部已完成任务）
 - `PATCH /api/todos/:id/toggle`
   - 若任务设置了 `recurrence`，标记完成时会自动创建下一期未完成任务
+
+## 外部项目接入示例（robotics-dev-career-lab）
+
+调用方完整文档请查看：`docs/integration-api.md`
+OpenAPI 规范请查看：`docs/openapi-integration.yaml`
+
+### 1) 登录后创建集成 token
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/integrations/tokens \
+  -H "Content-Type: application/json" \
+  -H "Cookie: todo_harbor_session=..." \
+  -d '{"name":"Robotics Plan Sync","source":"robotics-dev-career-lab"}'
+```
+
+返回中会包含一次性明文 `token`（形如 `thk_xxx`）。
+
+### 2) 外部项目调用同步接口
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/integrations/todos/sync \
+  -H "Authorization: Bearer thk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source":"robotics-dev-career-lab",
+    "defaultProject":"机器人学习计划",
+    "items":[
+      {"externalId":"week1-day1","title":"Week1 Day1 安装 ROS2 Jazzy","dueDate":"2026-03-06","tags":["robotics","week1","day1"]},
+      {"externalId":"week1-day2","title":"Week1 Day2 pub/sub demo","dueDate":"2026-03-07","tags":["robotics","week1","day2"]}
+    ]
+  }'
+```
+
+同一 `source + externalId` 再次提交时会执行更新（upsert），避免重复创建。
 
 ## 日志规范
 

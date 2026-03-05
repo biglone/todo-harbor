@@ -186,6 +186,60 @@ h1 {
   backdrop-filter: blur(6px);
 }
 
+.docs-panel {
+  padding: 16px;
+}
+
+.docs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.docs-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #0f6f66;
+}
+
+.docs-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.16rem;
+  line-height: 1.2;
+}
+
+.docs-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.docs-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.docs-link {
+  border: 1px solid rgba(33, 54, 94, 0.18);
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-decoration: none;
+  color: #1f3d6e;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.docs-link:hover {
+  background: rgba(235, 241, 255, 0.95);
+}
+
 .auth-panel {
   padding: 16px;
 }
@@ -1210,6 +1264,16 @@ button {
   .auth-head {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .docs-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .docs-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .auth-actions {

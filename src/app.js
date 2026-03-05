@@ -39,6 +39,12 @@ const {
   clearResetToken,
   updateUserEmail,
   updateUserPassword,
+  createIntegrationToken: createIntegrationTokenRecord,
+  listIntegrationTokens,
+  getIntegrationTokenByHash,
+  touchIntegrationToken,
+  revokeIntegrationToken,
+  upsertTodosByIntegration,
   dbFile,
 } = require("./db");
 
@@ -71,6 +77,7 @@ const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
 const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const PUBLIC_INDEX_FILE = path.join(PUBLIC_DIR, "index.html");
+const DOCS_DIR = path.join(__dirname, "..", "docs");
 const APP_VERSION = process.env.APP_VERSION || packageJson.version || "0.0.0";
 const APP_GIT_SHA = process.env.APP_GIT_SHA || process.env.GIT_SHA || "";
 
@@ -137,6 +144,21 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeIntegrationSource(value, { fallback = "" } = {}) {
+  const normalized = String(value || fallback)
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+
+  if (!/^[a-z0-9][a-z0-9._-]{0,79}$/.test(normalized)) {
+    return "";
+  }
+
+  return normalized;
+}
+
 function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -194,6 +216,15 @@ function takeRateLimitToken(key, { limit, windowMs }) {
 
 function clearRateLimitBucket(key) {
   authRateLimitBuckets.delete(key);
+}
+
+function getIntegrationTokenFromRequest(req) {
+  const authHeader = String(req.get("authorization") || "").trim();
+  if (/^bearer\s+/i.test(authHeader)) {
+    return authHeader.replace(/^bearer\s+/i, "").trim();
+  }
+
+  return String(req.get("x-api-key") || "").trim();
 }
 
 function checkAuthRateLimit(req, res, key, { limit, windowMs } = {}) {
@@ -333,6 +364,29 @@ function requireVerified(req, res, next) {
     return res.status(403).json({ error: "Email not verified" });
   }
 
+  return next();
+}
+
+function requireIntegrationAuth(req, res, next) {
+  const token = getIntegrationTokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: "Missing integration token" });
+  }
+
+  const tokenHash = hashToken(token);
+  const integration = getIntegrationTokenByHash(tokenHash);
+  if (!integration || integration.revokedAt) {
+    return res.status(401).json({ error: "Invalid integration token" });
+  }
+
+  const user = getUserById(integration.userId);
+  if (!user) {
+    return res.status(401).json({ error: "Invalid integration token" });
+  }
+
+  touchIntegrationToken(integration.id);
+  req.user = user;
+  req.integration = integration;
   return next();
 }
 
@@ -700,6 +754,128 @@ app.post("/api/account/password", requireAuth, (req, res) => {
   updateUserPassword(req.user.id, passwordHash);
 
   return res.json({ ok: true });
+});
+
+app.get("/api/integrations/tokens", requireAuth, requireVerified, (req, res) => {
+  return res.json({
+    items: listIntegrationTokens(req.user.id),
+  });
+});
+
+app.post("/api/integrations/tokens", requireAuth, requireVerified, (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const source = normalizeIntegrationSource(req.body?.source, { fallback: "external" });
+
+  if (!name) {
+    return res.status(400).json({ error: "name is required" });
+  }
+  if (name.length > 80) {
+    return res.status(400).json({ error: "name cannot exceed 80 characters" });
+  }
+  if (!source) {
+    return res.status(400).json({
+      error: "source is invalid (allowed: lowercase letters, numbers, ., _, -; max 80 chars)",
+    });
+  }
+
+  const token = `thk_${crypto.randomBytes(24).toString("hex")}`;
+  const tokenHint = `${token.slice(0, 10)}...${token.slice(-4)}`;
+
+  const created = createIntegrationTokenRecord(req.user.id, {
+    name,
+    source,
+    tokenHash: hashToken(token),
+    tokenHint,
+  });
+
+  return res.status(201).json({
+    ...created,
+    token,
+    note: "Token is only returned once. Please store it securely.",
+  });
+});
+
+app.delete("/api/integrations/tokens/:id", requireAuth, requireVerified, (req, res) => {
+  const tokenId = Number.parseInt(String(req.params.id || ""), 10);
+  if (!Number.isInteger(tokenId) || tokenId <= 0) {
+    return res.status(400).json({ error: "id must be a positive integer" });
+  }
+
+  const revoked = revokeIntegrationToken(req.user.id, tokenId);
+  if (!revoked) {
+    return res.status(404).json({ error: "token not found" });
+  }
+
+  return res.json({ ok: true, revokedId: tokenId });
+});
+
+app.post("/api/integrations/todos/sync", requireIntegrationAuth, requireVerified, (req, res) => {
+  const source = normalizeIntegrationSource(req.body?.source, { fallback: req.integration?.source || "external" });
+  if (!source) {
+    return res.status(400).json({
+      error: "source is invalid (allowed: lowercase letters, numbers, ., _, -; max 80 chars)",
+    });
+  }
+
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) {
+    return res.status(400).json({ error: "items is required and must be a non-empty array" });
+  }
+
+  if (items.length > 1000) {
+    return res.status(400).json({ error: "items cannot exceed 1000 records per request" });
+  }
+
+  const defaultProjectRaw = String(req.body?.defaultProject || "").trim();
+  if (defaultProjectRaw && defaultProjectRaw.length > 80) {
+    return res.status(400).json({ error: "defaultProject cannot exceed 80 characters" });
+  }
+  const defaultProject = defaultProjectRaw || source;
+
+  const normalizedItems = [];
+  const seenExternalIds = new Set();
+
+  for (let i = 0; i < items.length; i += 1) {
+    const rawItem = items[i];
+    const externalIdText = String(rawItem?.externalId || "").trim();
+    if (externalIdText.length > 120) {
+      return res.status(400).json({ error: `items[${i}].externalId cannot exceed 120 characters` });
+    }
+    if (externalIdText) {
+      const duplicateKey = externalIdText.toLowerCase();
+      if (seenExternalIds.has(duplicateKey)) {
+        return res.status(400).json({ error: `items[${i}].externalId duplicated in request` });
+      }
+      seenExternalIds.add(duplicateKey);
+    }
+
+    const parsed = parseTodoInput(
+      {
+        ...rawItem,
+        project: rawItem?.project ?? defaultProject,
+      },
+      req.user.id,
+    );
+
+    if (parsed.error) {
+      return res.status(400).json({ error: `items[${i}]: ${parsed.error}` });
+    }
+
+    normalizedItems.push({
+      ...parsed.value,
+      externalId: externalIdText || null,
+    });
+  }
+
+  const result = upsertTodosByIntegration(req.user.id, {
+    source,
+    items: normalizedItems,
+  });
+
+  return res.status(201).json({
+    ...result,
+    stats: getStats(req.user.id),
+  });
 });
 
 app.use("/api/todos", requireAuth, requireVerified);
@@ -1445,6 +1621,7 @@ app.get("/settings", (req, res) => {
   return res.sendFile(PUBLIC_INDEX_FILE);
 });
 
+app.use("/docs", express.static(DOCS_DIR));
 app.use(express.static(PUBLIC_DIR));
 
 app.use((err, req, res, _next) => {

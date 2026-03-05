@@ -93,6 +93,29 @@ const createTablesSQL = `
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS integration_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_hint TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS integration_todo_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    todo_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, source, external_id)
+  );
 `;
 
 db.exec(createTablesSQL);
@@ -180,6 +203,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_undo_snapshots_user_id ON undo_snapshots (user_id);
   CREATE INDEX IF NOT EXISTS idx_users_verify_token_hash ON users (verify_token_hash);
   CREATE INDEX IF NOT EXISTS idx_users_reset_token_hash ON users (reset_token_hash);
+  CREATE INDEX IF NOT EXISTS idx_integration_tokens_user_id ON integration_tokens (user_id);
+  CREATE INDEX IF NOT EXISTS idx_integration_tokens_token_hash ON integration_tokens (token_hash);
+  CREATE INDEX IF NOT EXISTS idx_integration_links_user_source ON integration_todo_links (user_id, source);
+  CREATE INDEX IF NOT EXISTS idx_integration_links_todo_id ON integration_todo_links (todo_id);
 `);
 
 const createUserQuery = db.prepare(`
@@ -535,6 +562,62 @@ const getLatestUndoSnapshotQuery = db.prepare(`
 const deleteUndoSnapshotByIdQuery = db.prepare(`
   DELETE FROM undo_snapshots
   WHERE id = @id AND user_id = @user_id
+`);
+
+const createIntegrationTokenQuery = db.prepare(`
+  INSERT INTO integration_tokens (user_id, name, source, token_hash, token_hint)
+  VALUES (@user_id, @name, @source, @token_hash, @token_hint)
+`);
+
+const listIntegrationTokensQuery = db.prepare(`
+  SELECT id, name, source, token_hint, last_used_at, revoked_at, created_at
+  FROM integration_tokens
+  WHERE user_id = @user_id
+  ORDER BY id DESC
+`);
+
+const getIntegrationTokenByIdQuery = db.prepare(`
+  SELECT id, name, source, token_hint, last_used_at, revoked_at, created_at
+  FROM integration_tokens
+  WHERE id = @id
+    AND user_id = @user_id
+  LIMIT 1
+`);
+
+const getIntegrationTokenByHashQuery = db.prepare(`
+  SELECT id, user_id, name, source, token_hint, last_used_at, revoked_at, created_at
+  FROM integration_tokens
+  WHERE token_hash = @token_hash
+  LIMIT 1
+`);
+
+const touchIntegrationTokenQuery = db.prepare(`
+  UPDATE integration_tokens
+  SET last_used_at = @last_used_at
+  WHERE id = @id
+`);
+
+const revokeIntegrationTokenQuery = db.prepare(`
+  UPDATE integration_tokens
+  SET revoked_at = @revoked_at
+  WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL
+`);
+
+const getIntegrationTodoLinkQuery = db.prepare(`
+  SELECT todo_id
+  FROM integration_todo_links
+  WHERE user_id = @user_id
+    AND source = @source
+    AND external_id = @external_id
+  LIMIT 1
+`);
+
+const upsertIntegrationTodoLinkQuery = db.prepare(`
+  INSERT INTO integration_todo_links (user_id, source, external_id, todo_id, updated_at)
+  VALUES (@user_id, @source, @external_id, @todo_id, CURRENT_TIMESTAMP)
+  ON CONFLICT(user_id, source, external_id) DO UPDATE SET
+    todo_id = excluded.todo_id,
+    updated_at = CURRENT_TIMESTAMP
 `);
 
 function mapTodo(row) {
@@ -1531,6 +1614,162 @@ function updateUserPassword(userId, passwordHash) {
   updateUserPasswordQuery.run({ id: userIdValue, password_hash: passwordHash });
 }
 
+function mapIntegrationToken(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    name: String(row.name || ""),
+    source: String(row.source || ""),
+    tokenHint: String(row.token_hint || ""),
+    lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null,
+    createdAt: String(row.created_at || ""),
+  };
+}
+
+function createIntegrationToken(userId, { name, source, tokenHash, tokenHint }) {
+  const userIdValue = requireUserId(userId);
+  const result = createIntegrationTokenQuery.run({
+    user_id: userIdValue,
+    name: String(name || "").trim(),
+    source: String(source || "").trim(),
+    token_hash: String(tokenHash || ""),
+    token_hint: String(tokenHint || ""),
+  });
+
+  return mapIntegrationToken(
+    getIntegrationTokenByIdQuery.get({
+      id: Number(result.lastInsertRowid),
+      user_id: userIdValue,
+    }),
+  );
+}
+
+function listIntegrationTokens(userId) {
+  return listIntegrationTokensQuery.all({ user_id: requireUserId(userId) }).map(mapIntegrationToken);
+}
+
+function getIntegrationTokenByHash(tokenHash) {
+  const row = getIntegrationTokenByHashQuery.get({ token_hash: String(tokenHash || "") });
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    name: String(row.name || ""),
+    source: String(row.source || ""),
+    tokenHint: String(row.token_hint || ""),
+    lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null,
+    createdAt: String(row.created_at || ""),
+  };
+}
+
+function touchIntegrationToken(tokenId) {
+  const id = Number(tokenId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return;
+  }
+
+  touchIntegrationTokenQuery.run({
+    id,
+    last_used_at: new Date().toISOString(),
+  });
+}
+
+function revokeIntegrationToken(userId, tokenId) {
+  const userIdValue = requireUserId(userId);
+  const id = Number(tokenId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return false;
+  }
+
+  const result = revokeIntegrationTokenQuery.run({
+    id,
+    user_id: userIdValue,
+    revoked_at: new Date().toISOString(),
+  });
+  return Number(result.changes || 0) > 0;
+}
+
+function upsertTodosByIntegration(userId, { source, items }) {
+  const userIdValue = requireUserId(userId);
+  const normalizedSource = String(source || "").trim();
+
+  saveUndoSnapshot(userIdValue);
+
+  const runUpsert = db.transaction((rows) => {
+    const results = [];
+    let created = 0;
+    let updated = 0;
+
+    for (const row of rows) {
+      const externalId = String(row.externalId || "").trim();
+      const normalized = normalizeTodoPayload({ ...row, userId: userIdValue });
+      let todo = null;
+      let action = "created";
+
+      if (externalId) {
+        const link = getIntegrationTodoLinkQuery.get({
+          user_id: userIdValue,
+          source: normalizedSource,
+          external_id: externalId,
+        });
+
+        const linkedTodoId = Number(link?.todo_id);
+        if (Number.isInteger(linkedTodoId) && linkedTodoId > 0) {
+          const existingTodo = getTodo(userIdValue, linkedTodoId);
+          if (existingTodo) {
+            updateTodoQuery.run({
+              id: linkedTodoId,
+              ...normalized,
+            });
+            todo = getTodo(userIdValue, linkedTodoId);
+            action = "updated";
+            updated += 1;
+          }
+        }
+      }
+
+      if (!todo) {
+        todo = insertTodo(normalized);
+        action = "created";
+        created += 1;
+      }
+
+      if (externalId) {
+        upsertIntegrationTodoLinkQuery.run({
+          user_id: userIdValue,
+          source: normalizedSource,
+          external_id: externalId,
+          todo_id: todo.id,
+        });
+      }
+
+      results.push({
+        action,
+        externalId: externalId || null,
+        todo,
+      });
+    }
+
+    return {
+      source: normalizedSource,
+      count: results.length,
+      created,
+      updated,
+      items: results,
+    };
+  });
+
+  return runUpsert(items);
+}
+
 module.exports = {
   dbFile,
   listTodos,
@@ -1566,4 +1805,10 @@ module.exports = {
   clearResetToken,
   updateUserEmail,
   updateUserPassword,
+  createIntegrationToken,
+  listIntegrationTokens,
+  getIntegrationTokenByHash,
+  touchIntegrationToken,
+  revokeIntegrationToken,
+  upsertTodosByIntegration,
 };
