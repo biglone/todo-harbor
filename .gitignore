@@ -5,3 +5,8 @@ npm-debug.log*
 .DS_Store
 .env
 .deploy-state/
+# OpenClaw AutoDev
+.autodev.verify.json
+.autodev/
+WORKFLOW_AUTO.md
+memory/
