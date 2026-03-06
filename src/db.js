@@ -13,6 +13,7 @@ db.pragma("journal_mode = WAL");
 const TODO_PRIORITY_VALUES = new Set(["low", "medium", "high"]);
 const TODO_STATUS_VALUES = new Set(["todo", "in_progress", "blocked"]);
 const TODO_RECURRENCE_VALUES = new Set(["none", "daily", "weekly", "monthly"]);
+const POMODORO_STATUS_VALUES = new Set(["running", "completed", "cancelled"]);
 const DEFAULT_TODO_PRIORITY = "medium";
 const DEFAULT_TODO_STATUS = "todo";
 const DEFAULT_TODO_RECURRENCE = "none";
@@ -116,6 +117,18 @@ const createTablesSQL = `
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, source, external_id)
   );
+
+  CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    todo_id INTEGER NOT NULL,
+    planned_minutes INTEGER NOT NULL DEFAULT 25,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'cancelled')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `;
 
 db.exec(createTablesSQL);
@@ -207,6 +220,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_integration_tokens_token_hash ON integration_tokens (token_hash);
   CREATE INDEX IF NOT EXISTS idx_integration_links_user_source ON integration_todo_links (user_id, source);
   CREATE INDEX IF NOT EXISTS idx_integration_links_todo_id ON integration_todo_links (todo_id);
+  CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_user_id ON pomodoro_sessions (user_id);
+  CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_user_todo_id ON pomodoro_sessions (user_id, todo_id);
+  CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_user_status ON pomodoro_sessions (user_id, status);
+  CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_started_at ON pomodoro_sessions (started_at);
 `);
 
 const createUserQuery = db.prepare(`
@@ -620,6 +637,88 @@ const upsertIntegrationTodoLinkQuery = db.prepare(`
     updated_at = CURRENT_TIMESTAMP
 `);
 
+const pomodoroSelectColumns = `
+  id, todo_id, planned_minutes, started_at, ended_at, duration_seconds, status, created_at
+`;
+
+const createPomodoroSessionQuery = db.prepare(`
+  INSERT INTO pomodoro_sessions (user_id, todo_id, planned_minutes, started_at, status)
+  VALUES (@user_id, @todo_id, @planned_minutes, @started_at, 'running')
+`);
+
+const getPomodoroSessionByIdQuery = db.prepare(`
+  SELECT ${pomodoroSelectColumns}
+  FROM pomodoro_sessions
+  WHERE id = @id
+    AND user_id = @user_id
+  LIMIT 1
+`);
+
+const getRunningPomodoroSessionQuery = db.prepare(`
+  SELECT ${pomodoroSelectColumns}
+  FROM pomodoro_sessions
+  WHERE user_id = @user_id
+    AND status = 'running'
+  ORDER BY id DESC
+  LIMIT 1
+`);
+
+const finishPomodoroSessionQuery = db.prepare(`
+  UPDATE pomodoro_sessions
+  SET ended_at = @ended_at,
+      duration_seconds = @duration_seconds,
+      status = @status
+  WHERE id = @id
+    AND user_id = @user_id
+    AND status = 'running'
+`);
+
+const pomodoroFilterWhereClause = `
+  ps.user_id = @user_id
+  AND (@todo_id <= 0 OR ps.todo_id = @todo_id)
+  AND (@from = '' OR ps.started_at >= @from)
+  AND (@to = '' OR ps.started_at <= @to)
+`;
+
+const getPomodoroSummaryQuery = db.prepare(`
+  SELECT
+    COUNT(*) AS total_sessions,
+    SUM(CASE WHEN ps.status = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
+    SUM(CASE WHEN ps.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_sessions,
+    SUM(ps.duration_seconds) AS total_seconds,
+    SUM(CASE WHEN ps.status = 'completed' THEN ps.duration_seconds ELSE 0 END) AS completed_seconds
+  FROM pomodoro_sessions AS ps
+  WHERE ${pomodoroFilterWhereClause}
+`);
+
+const listPomodoroByTodoQuery = db.prepare(`
+  SELECT
+    ps.todo_id AS todo_id,
+    COALESCE(t.title, '[已删除任务]') AS title,
+    COALESCE(t.project, '默认项目') AS project,
+    COUNT(*) AS total_sessions,
+    SUM(CASE WHEN ps.status = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
+    SUM(ps.duration_seconds) AS total_seconds,
+    SUM(CASE WHEN ps.status = 'completed' THEN ps.duration_seconds ELSE 0 END) AS completed_seconds,
+    MAX(ps.started_at) AS last_started_at
+  FROM pomodoro_sessions AS ps
+  LEFT JOIN todos AS t
+    ON t.id = ps.todo_id
+    AND t.user_id = ps.user_id
+  WHERE ${pomodoroFilterWhereClause}
+  GROUP BY ps.todo_id
+  ORDER BY total_seconds DESC, ps.todo_id DESC
+  LIMIT @limit
+`);
+
+const listPomodoroRecentSessionsQuery = db.prepare(`
+  SELECT ${pomodoroSelectColumns}
+  FROM pomodoro_sessions AS ps
+  WHERE ${pomodoroFilterWhereClause}
+  ORDER BY ps.id DESC
+  LIMIT @limit
+`);
+
 function mapTodo(row) {
   const priority = normalizeTodoPriority(row.priority);
   const status = normalizeTodoStatus(row.status);
@@ -648,6 +747,49 @@ function mapRawTodo(row) {
     tags,
     completed: Number(row.completed || 0),
   };
+}
+
+function mapPomodoroSession(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    todoId: Number(row.todo_id),
+    plannedMinutes: Number(row.planned_minutes || 25),
+    startedAt: String(row.started_at || ""),
+    endedAt: row.ended_at ? String(row.ended_at) : null,
+    durationSeconds: Number(row.duration_seconds || 0),
+    status: normalizePomodoroStatus(row.status, "running"),
+    createdAt: String(row.created_at || ""),
+  };
+}
+
+function normalizePomodoroStatus(rawStatus, fallback = "running") {
+  const safeFallback = POMODORO_STATUS_VALUES.has(String(fallback || "").trim().toLowerCase())
+    ? String(fallback).trim().toLowerCase()
+    : "running";
+  const value = String(rawStatus || safeFallback)
+    .trim()
+    .toLowerCase();
+  return POMODORO_STATUS_VALUES.has(value) ? value : safeFallback;
+}
+
+function clampPomodoroMinutes(rawMinutes, fallback = 25) {
+  const value = Number.parseInt(String(rawMinutes || fallback), 10);
+  if (!Number.isInteger(value)) {
+    return 25;
+  }
+  return Math.min(Math.max(value, 5), 180);
+}
+
+function clampPomodoroDurationSeconds(rawSeconds, fallback = 0) {
+  const value = Number.parseInt(String(rawSeconds || fallback), 10);
+  if (!Number.isInteger(value)) {
+    return Math.max(0, Number.parseInt(String(fallback || 0), 10) || 0);
+  }
+  return Math.min(Math.max(value, 0), 24 * 60 * 60);
 }
 
 function normalizeTodoPriority(rawPriority) {
@@ -1770,6 +1912,151 @@ function upsertTodosByIntegration(userId, { source, items }) {
   return runUpsert(items);
 }
 
+function normalizePomodoroFilterOptions(userId, options = {}) {
+  const normalizedTodoId = Number.parseInt(String(options.todoId || 0), 10);
+  const limit = Number.parseInt(String(options.limit || 20), 10);
+  return {
+    user_id: requireUserId(userId),
+    todo_id: Number.isInteger(normalizedTodoId) && normalizedTodoId > 0 ? normalizedTodoId : 0,
+    from: String(options.from || "").trim(),
+    to: String(options.to || "").trim(),
+    limit: Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 200) : 20,
+  };
+}
+
+function getPomodoroSession(userId, sessionId) {
+  const id = Number.parseInt(String(sessionId || ""), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+
+  const row = getPomodoroSessionByIdQuery.get({
+    id,
+    user_id: requireUserId(userId),
+  });
+  return mapPomodoroSession(row);
+}
+
+function getRunningPomodoroSession(userId) {
+  const row = getRunningPomodoroSessionQuery.get({ user_id: requireUserId(userId) });
+  return mapPomodoroSession(row);
+}
+
+function createPomodoroSession(userId, { todoId, plannedMinutes = 25, startedAt } = {}) {
+  const userIdValue = requireUserId(userId);
+  const targetTodoId = Number.parseInt(String(todoId || ""), 10);
+
+  if (!Number.isInteger(targetTodoId) || targetTodoId <= 0) {
+    throw new Error("todoId must be a positive integer");
+  }
+
+  const todo = getTodo(userIdValue, targetTodoId);
+  if (!todo) {
+    throw new Error("todoId does not exist");
+  }
+  if (todo.completed) {
+    throw new Error("Cannot start pomodoro on a completed todo");
+  }
+
+  const active = getRunningPomodoroSession(userIdValue);
+  if (active) {
+    throw new Error("Another pomodoro session is already running");
+  }
+
+  const parsedStartedAt = Date.parse(String(startedAt || ""));
+  const startedAtValue = Number.isFinite(parsedStartedAt)
+    ? new Date(parsedStartedAt).toISOString()
+    : new Date().toISOString();
+
+  const result = createPomodoroSessionQuery.run({
+    user_id: userIdValue,
+    todo_id: targetTodoId,
+    planned_minutes: clampPomodoroMinutes(plannedMinutes, 25),
+    started_at: startedAtValue,
+  });
+
+  return getPomodoroSession(userIdValue, Number(result.lastInsertRowid));
+}
+
+function finishPomodoroSession(userId, sessionId, { status = "completed", durationSeconds, endedAt } = {}) {
+  const userIdValue = requireUserId(userId);
+  const id = Number.parseInt(String(sessionId || ""), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("sessionId must be a positive integer");
+  }
+
+  const session = getPomodoroSession(userIdValue, id);
+  if (!session) {
+    return null;
+  }
+
+  if (session.status !== "running") {
+    return session;
+  }
+
+  const parsedEndedAt = Date.parse(String(endedAt || ""));
+  const endedAtValue = Number.isFinite(parsedEndedAt)
+    ? new Date(parsedEndedAt).toISOString()
+    : new Date().toISOString();
+
+  const startedAtMs = Date.parse(String(session.startedAt || ""));
+  const endedAtMs = Date.parse(endedAtValue);
+  const inferredDuration =
+    Number.isFinite(startedAtMs) && Number.isFinite(endedAtMs) && endedAtMs >= startedAtMs
+      ? Math.floor((endedAtMs - startedAtMs) / 1000)
+      : session.plannedMinutes * 60;
+
+  const nextStatus = normalizePomodoroStatus(status, "completed");
+  const writeStatus = nextStatus === "running" ? "completed" : nextStatus;
+  const result = finishPomodoroSessionQuery.run({
+    id,
+    user_id: userIdValue,
+    ended_at: endedAtValue,
+    duration_seconds: clampPomodoroDurationSeconds(durationSeconds, inferredDuration),
+    status: writeStatus,
+  });
+
+  if (Number(result.changes || 0) <= 0) {
+    return getPomodoroSession(userIdValue, id);
+  }
+
+  return getPomodoroSession(userIdValue, id);
+}
+
+function getPomodoroStats(userId, options = {}) {
+  const normalized = normalizePomodoroFilterOptions(userId, options);
+  const summaryRow = getPomodoroSummaryQuery.get(normalized) || {};
+  const byTodoRows = listPomodoroByTodoQuery.all(normalized);
+  const recentRows = listPomodoroRecentSessionsQuery.all(normalized);
+
+  return {
+    filter: {
+      todoId: normalized.todo_id > 0 ? normalized.todo_id : null,
+      from: normalized.from || null,
+      to: normalized.to || null,
+    },
+    summary: {
+      totalSessions: Number(summaryRow.total_sessions || 0),
+      completedSessions: Number(summaryRow.completed_sessions || 0),
+      cancelledSessions: Number(summaryRow.cancelled_sessions || 0),
+      totalSeconds: Number(summaryRow.total_seconds || 0),
+      completedSeconds: Number(summaryRow.completed_seconds || 0),
+    },
+    byTodo: byTodoRows.map((row) => ({
+      todoId: Number(row.todo_id),
+      title: String(row.title || ""),
+      project: String(row.project || "默认项目"),
+      totalSessions: Number(row.total_sessions || 0),
+      completedSessions: Number(row.completed_sessions || 0),
+      totalSeconds: Number(row.total_seconds || 0),
+      completedSeconds: Number(row.completed_seconds || 0),
+      lastStartedAt: row.last_started_at ? String(row.last_started_at) : null,
+    })),
+    recent: recentRows.map(mapPomodoroSession),
+    running: getRunningPomodoroSession(userId),
+  };
+}
+
 module.exports = {
   dbFile,
   listTodos,
@@ -1811,4 +2098,9 @@ module.exports = {
   touchIntegrationToken,
   revokeIntegrationToken,
   upsertTodosByIntegration,
+  createPomodoroSession,
+  getPomodoroSession,
+  getRunningPomodoroSession,
+  finishPomodoroSession,
+  getPomodoroStats,
 };

@@ -18,6 +18,7 @@
 - 统计总数、进行中、已完成数量
 - 批量修改项目/到期日（页面内弹窗）
 - 导出/导入 JSON、支持多步撤销（Undo）
+- 番茄时钟：可对任务启动专注计时并记录耗时
 - 注册/登录（数据按账号隔离）
 - 页面顶部显示当前版本号（含可选 Git 短 SHA）
 - SQLite 持久化保存（重启容器后数据仍保留）
@@ -123,6 +124,16 @@ journalctl -u cloudflared-todo-harbor-20260225.service -f
 - `GET /api/account`（账号信息）
 - `POST /api/account/email`（修改邮箱，需当前密码）
 - `POST /api/account/password`（修改密码）
+- `GET /api/pomodoro/current`（查询当前运行中的番茄会话）
+- `POST /api/pomodoro/sessions`（开始番茄会话）
+  - `todoId: number`（必填）
+  - `plannedMinutes?: number`（可选，范围 `5-180`，默认 `25`）
+- `POST /api/pomodoro/sessions/:id/complete`（完成番茄会话）
+  - `durationSeconds?: number`（可选，范围 `0-86400`；不传则由后端按起止时间计算）
+- `POST /api/pomodoro/sessions/:id/cancel`（中断番茄会话）
+  - `durationSeconds?: number`（可选，范围 `0-86400`）
+- `GET /api/pomodoro/stats?todoId=&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=50`
+  - 返回 `summary`（总时长/完成次数/中断次数）与 `byTodo`（按任务聚合耗时）
 - `GET /api/integrations/tokens`（列出当前账号的外部集成 token，返回脱敏信息）
 - `POST /api/integrations/tokens`（创建外部集成 token，一次性返回明文 token）
   - `name: string`（必填，<=80）

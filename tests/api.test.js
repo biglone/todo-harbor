@@ -622,6 +622,95 @@ describe("Todos API", () => {
     assert.equal(passUpdate.status, 200);
   });
 
+  test("pomodoro lifecycle and stats", async () => {
+    const request = createTestRequest();
+    await registerAndLogin(request);
+
+    const focusTodo = await createTodo(request, {
+      title: "Deep work task",
+      status: "todo",
+    });
+
+    const start = await request.post("/api/pomodoro/sessions").send({
+      todoId: focusTodo.id,
+      plannedMinutes: 25,
+    });
+    assert.equal(start.status, 201);
+    assert.equal(start.body.session.status, "running");
+    assert.equal(start.body.session.todoId, focusTodo.id);
+    assert.equal(start.body.todo.status, "in_progress");
+
+    const duplicateStart = await request.post("/api/pomodoro/sessions").send({
+      todoId: focusTodo.id,
+      plannedMinutes: 25,
+    });
+    assert.equal(duplicateStart.status, 409);
+
+    const waitingTodo = await createTodo(request, {
+      title: "Should stay todo while another pomodoro is running",
+      status: "todo",
+    });
+
+    const conflictOnOtherTodo = await request.post("/api/pomodoro/sessions").send({
+      todoId: waitingTodo.id,
+      plannedMinutes: 20,
+    });
+    assert.equal(conflictOnOtherTodo.status, 409);
+
+    const todosAfterConflict = await listTodos(request, { sort: "created_desc" });
+    const waitingTodoAfterConflict = todosAfterConflict.items.find((item) => item.id === waitingTodo.id);
+    assert.ok(waitingTodoAfterConflict);
+    assert.equal(waitingTodoAfterConflict.status, "todo");
+
+    const currentRunning = await request.get("/api/pomodoro/current");
+    assert.equal(currentRunning.status, 200);
+    assert.equal(currentRunning.body.session.id, start.body.session.id);
+
+    const complete = await request
+      .post(`/api/pomodoro/sessions/${start.body.session.id}/complete`)
+      .send({ durationSeconds: 1200 });
+    assert.equal(complete.status, 200);
+    assert.equal(complete.body.session.status, "completed");
+    assert.equal(complete.body.session.durationSeconds, 1200);
+
+    const afterComplete = await request.get("/api/pomodoro/current");
+    assert.equal(afterComplete.status, 200);
+    assert.equal(afterComplete.body.session, null);
+
+    const statsAfterComplete = await request.get("/api/pomodoro/stats").query({ todoId: focusTodo.id });
+    assert.equal(statsAfterComplete.status, 200);
+    assert.equal(statsAfterComplete.body.summary.totalSessions, 1);
+    assert.equal(statsAfterComplete.body.summary.completedSessions, 1);
+    assert.equal(statsAfterComplete.body.summary.cancelledSessions, 0);
+    assert.equal(statsAfterComplete.body.summary.totalSeconds, 1200);
+    assert.equal(statsAfterComplete.body.byTodo[0].todoId, focusTodo.id);
+
+    const cancelTodo = await createTodo(request, {
+      title: "Interruptible task",
+      status: "todo",
+    });
+
+    const startCancel = await request.post("/api/pomodoro/sessions").send({
+      todoId: cancelTodo.id,
+      plannedMinutes: 15,
+    });
+    assert.equal(startCancel.status, 201);
+
+    const cancel = await request
+      .post(`/api/pomodoro/sessions/${startCancel.body.session.id}/cancel`)
+      .send({ durationSeconds: 300 });
+    assert.equal(cancel.status, 200);
+    assert.equal(cancel.body.session.status, "cancelled");
+    assert.equal(cancel.body.session.durationSeconds, 300);
+
+    const allStats = await request.get("/api/pomodoro/stats");
+    assert.equal(allStats.status, 200);
+    assert.equal(allStats.body.summary.totalSessions, 2);
+    assert.equal(allStats.body.summary.completedSessions, 1);
+    assert.equal(allStats.body.summary.cancelledSessions, 1);
+    assert.equal(allStats.body.summary.totalSeconds, 1500);
+  });
+
   test("integration todos sync supports externalId upsert", async () => {
     const request = createTestRequest();
     await registerAndLogin(request);

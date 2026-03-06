@@ -45,6 +45,11 @@ const {
   touchIntegrationToken,
   revokeIntegrationToken,
   upsertTodosByIntegration,
+  createPomodoroSession,
+  getPomodoroSession,
+  getRunningPomodoroSession,
+  finishPomodoroSession,
+  getPomodoroStats,
   dbFile,
 } = require("./db");
 
@@ -56,6 +61,10 @@ const VALID_STATUSES = new Set(["todo", "in_progress", "blocked"]);
 const VALID_RECURRENCES = new Set(["none", "daily", "weekly", "monthly"]);
 const DEFAULT_PAGE_SIZE = 60;
 const MAX_PAGE_SIZE = 200;
+const DEFAULT_POMODORO_MINUTES = 25;
+const MIN_POMODORO_MINUTES = 5;
+const MAX_POMODORO_MINUTES = 180;
+const MAX_POMODORO_DURATION_SECONDS = 24 * 60 * 60;
 const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
 const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || 120);
 const AUTH_LOGIN_RATE_LIMIT_MAX = Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || 40);
@@ -876,6 +885,203 @@ app.post("/api/integrations/todos/sync", requireIntegrationAuth, requireVerified
     ...result,
     stats: getStats(req.user.id),
   });
+});
+
+app.use("/api/pomodoro", requireAuth, requireVerified);
+
+app.get("/api/pomodoro/current", (req, res) => {
+  const running = getRunningPomodoroSession(req.user.id);
+  if (!running) {
+    return res.json({ session: null, todo: null });
+  }
+
+  return res.json({
+    session: running,
+    todo: getTodo(req.user.id, running.todoId),
+  });
+});
+
+app.post("/api/pomodoro/sessions", (req, res) => {
+  const todoId = Number.parseInt(String(req.body?.todoId || ""), 10);
+  if (!Number.isInteger(todoId) || todoId <= 0) {
+    return res.status(400).json({ error: "todoId must be a positive integer" });
+  }
+
+  const plannedMinutesParsed = parsePositiveInteger(req.body?.plannedMinutes, {
+    field: "plannedMinutes",
+    defaultValue: DEFAULT_POMODORO_MINUTES,
+    min: MIN_POMODORO_MINUTES,
+    max: MAX_POMODORO_MINUTES,
+  });
+  if (plannedMinutesParsed.error) {
+    return res.status(400).json({ error: plannedMinutesParsed.error });
+  }
+
+  const todo = getTodo(req.user.id, todoId);
+  if (!todo) {
+    return res.status(404).json({ error: "Todo not found" });
+  }
+  if (todo.completed) {
+    return res.status(400).json({ error: "Cannot start pomodoro on a completed todo" });
+  }
+
+  try {
+    const session = createPomodoroSession(req.user.id, {
+      todoId,
+      plannedMinutes: plannedMinutesParsed.value,
+    });
+
+    if (todo.status !== "in_progress") {
+      updateTodosBatch(req.user.id, {
+        ids: [todo.id],
+        status: "in_progress",
+      });
+    }
+
+    return res.status(201).json({
+      session,
+      todo: getTodo(req.user.id, todoId),
+    });
+  } catch (error) {
+    const message = String(error?.message || "Failed to start pomodoro");
+    if (message.includes("Another pomodoro session is already running")) {
+      return res.status(409).json({ error: message });
+    }
+    if (message.includes("todoId does not exist")) {
+      return res.status(404).json({ error: "Todo not found" });
+    }
+    return res.status(400).json({ error: message });
+  }
+});
+
+function parseOptionalDurationSeconds(value) {
+  if (value === undefined) {
+    return { value: undefined };
+  }
+
+  const parsed = parsePositiveInteger(value, {
+    field: "durationSeconds",
+    defaultValue: 0,
+    min: 0,
+    max: MAX_POMODORO_DURATION_SECONDS,
+  });
+
+  return parsed.error ? { error: parsed.error } : { value: parsed.value };
+}
+
+function parsePomodoroDateRange(query) {
+  const from = String(query?.from || "").trim();
+  const to = String(query?.to || "").trim();
+
+  if (from && !isValidDateString(from)) {
+    return { error: "from must be a valid date in YYYY-MM-DD format" };
+  }
+  if (to && !isValidDateString(to)) {
+    return { error: "to must be a valid date in YYYY-MM-DD format" };
+  }
+  if (from && to && from > to) {
+    return { error: "from cannot be later than to" };
+  }
+
+  return {
+    fromIso: from ? `${from}T00:00:00.000Z` : "",
+    toIso: to ? `${to}T23:59:59.999Z` : "",
+  };
+}
+
+app.post("/api/pomodoro/sessions/:id/complete", (req, res) => {
+  const sessionId = Number.parseInt(String(req.params.id || ""), 10);
+  if (!Number.isInteger(sessionId) || sessionId <= 0) {
+    return res.status(400).json({ error: "id must be a positive integer" });
+  }
+
+  const existing = getPomodoroSession(req.user.id, sessionId);
+  if (!existing) {
+    return res.status(404).json({ error: "Pomodoro session not found" });
+  }
+  if (existing.status !== "running") {
+    return res.status(409).json({ error: "Pomodoro session is not running" });
+  }
+
+  const durationParsed = parseOptionalDurationSeconds(req.body?.durationSeconds);
+  if (durationParsed.error) {
+    return res.status(400).json({ error: durationParsed.error });
+  }
+
+  const ended = finishPomodoroSession(req.user.id, sessionId, {
+    status: "completed",
+    durationSeconds: durationParsed.value,
+  });
+
+  return res.json({
+    session: ended,
+    todo: ended ? getTodo(req.user.id, ended.todoId) : null,
+  });
+});
+
+app.post("/api/pomodoro/sessions/:id/cancel", (req, res) => {
+  const sessionId = Number.parseInt(String(req.params.id || ""), 10);
+  if (!Number.isInteger(sessionId) || sessionId <= 0) {
+    return res.status(400).json({ error: "id must be a positive integer" });
+  }
+
+  const existing = getPomodoroSession(req.user.id, sessionId);
+  if (!existing) {
+    return res.status(404).json({ error: "Pomodoro session not found" });
+  }
+  if (existing.status !== "running") {
+    return res.status(409).json({ error: "Pomodoro session is not running" });
+  }
+
+  const durationParsed = parseOptionalDurationSeconds(req.body?.durationSeconds);
+  if (durationParsed.error) {
+    return res.status(400).json({ error: durationParsed.error });
+  }
+
+  const ended = finishPomodoroSession(req.user.id, sessionId, {
+    status: "cancelled",
+    durationSeconds: durationParsed.value,
+  });
+
+  return res.json({
+    session: ended,
+    todo: ended ? getTodo(req.user.id, ended.todoId) : null,
+  });
+});
+
+app.get("/api/pomodoro/stats", (req, res) => {
+  const todoIdRaw = String(req.query?.todoId || "").trim();
+  let todoId = 0;
+  if (todoIdRaw) {
+    todoId = Number.parseInt(todoIdRaw, 10);
+    if (!Number.isInteger(todoId) || todoId <= 0) {
+      return res.status(400).json({ error: "todoId must be a positive integer" });
+    }
+  }
+
+  const range = parsePomodoroDateRange(req.query);
+  if (range.error) {
+    return res.status(400).json({ error: range.error });
+  }
+
+  const limit = parsePositiveInteger(req.query?.limit, {
+    field: "limit",
+    defaultValue: 20,
+    min: 1,
+    max: 200,
+  });
+  if (limit.error) {
+    return res.status(400).json({ error: limit.error });
+  }
+
+  const stats = getPomodoroStats(req.user.id, {
+    todoId: todoId || undefined,
+    from: range.fromIso,
+    to: range.toIso,
+    limit: limit.value,
+  });
+
+  return res.json(stats);
 });
 
 app.use("/api/todos", requireAuth, requireVerified);

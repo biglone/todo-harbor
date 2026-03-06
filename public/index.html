@@ -336,6 +336,45 @@
         </article>
       </section>
 
+      <section class="panel pomodoro-panel" id="pomodoroPanel" aria-label="番茄时钟">
+        <div class="pomodoro-head">
+          <div>
+            <p class="pomodoro-kicker">专注模式</p>
+            <h2>番茄时钟</h2>
+            <p class="pomodoro-note">在任务卡点击“番茄开始”即可进入专注，并自动记录任务耗时。</p>
+          </div>
+          <div class="pomodoro-settings">
+            <label for="pomodoroDurationSelect">单次时长</label>
+            <select id="pomodoroDurationSelect">
+              <option value="15">15 分钟</option>
+              <option value="25" selected>25 分钟</option>
+              <option value="35">35 分钟</option>
+              <option value="45">45 分钟</option>
+              <option value="60">60 分钟</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="pomodoro-body">
+          <div class="pomodoro-clock-wrap">
+            <p id="pomodoroTimer" class="pomodoro-timer">25:00</p>
+            <p id="pomodoroSessionMeta" class="pomodoro-session-meta">尚未开始番茄专注</p>
+          </div>
+          <div class="pomodoro-task-wrap">
+            <p class="pomodoro-task-label">当前任务</p>
+            <p id="pomodoroTaskTitle" class="pomodoro-task-title">未选择任务</p>
+            <p id="pomodoroTaskStats" class="pomodoro-task-stats">累计专注 0 分钟 · 0 次番茄</p>
+          </div>
+          <div class="pomodoro-actions">
+            <button id="pomodoroStartButton" type="button">开始番茄</button>
+            <button id="pomodoroCompleteButton" type="button" class="secondary-button compact-button">
+              完成番茄
+            </button>
+            <button id="pomodoroCancelButton" type="button" class="danger-button">中断</button>
+          </div>
+        </div>
+      </section>
+
       <section class="panel board-panel" id="boardPanel">
         <div class="board-toolbar">
           <div class="toolbar-controls">

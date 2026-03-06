@@ -23,6 +23,11 @@ const state = {
   parents: [],
   undoAvailable: false,
   user: null,
+  pomodoroSelectedTodoId: null,
+  pomodoroDurationMinutes: 25,
+  pomodoroSession: null,
+  pomodoroSummary: null,
+  pomodoroByTodo: [],
 };
 
 function resolvePageMode(pathname) {
@@ -93,7 +98,16 @@ const listProgressEl = document.getElementById("listProgress");
 const loadMoreButtonEl = document.getElementById("loadMoreButton");
 const composerPanelEl = document.getElementById("composerPanel");
 const metricsPanelEl = document.getElementById("metricsPanel");
+const pomodoroPanelEl = document.getElementById("pomodoroPanel");
 const boardPanelEl = document.getElementById("boardPanel");
+const pomodoroDurationSelectEl = document.getElementById("pomodoroDurationSelect");
+const pomodoroTimerEl = document.getElementById("pomodoroTimer");
+const pomodoroSessionMetaEl = document.getElementById("pomodoroSessionMeta");
+const pomodoroTaskTitleEl = document.getElementById("pomodoroTaskTitle");
+const pomodoroTaskStatsEl = document.getElementById("pomodoroTaskStats");
+const pomodoroStartButtonEl = document.getElementById("pomodoroStartButton");
+const pomodoroCompleteButtonEl = document.getElementById("pomodoroCompleteButton");
+const pomodoroCancelButtonEl = document.getElementById("pomodoroCancelButton");
 
 const authPanelEl = document.getElementById("authPanel");
 const authFormEl = document.getElementById("authForm");
@@ -170,6 +184,7 @@ const MODAL_TYPES = {
 };
 
 let activeModalType = null;
+let pomodoroTickerId = null;
 const EMAIL_NOT_VERIFIED_ERROR = "Email not verified";
 const SYNC_STATUS_VISIBLE_STATES = new Set(["同步中", "未登录", "邮箱未验证", "连接异常"]);
 
@@ -274,6 +289,21 @@ function setBusy(nextBusy) {
   if (changePasswordButtonEl) {
     changePasswordButtonEl.disabled = locked;
   }
+
+  if (pomodoroDurationSelectEl) {
+    pomodoroDurationSelectEl.disabled = locked;
+  }
+  if (pomodoroStartButtonEl) {
+    pomodoroStartButtonEl.disabled = locked;
+  }
+  if (pomodoroCompleteButtonEl) {
+    pomodoroCompleteButtonEl.disabled = locked;
+  }
+  if (pomodoroCancelButtonEl) {
+    pomodoroCancelButtonEl.disabled = locked;
+  }
+
+  renderPomodoroPanel();
 }
 
 function setAuthBusy(isBusy) {
@@ -416,6 +446,9 @@ function updateRoutePanels(enabled) {
   if (metricsPanelEl) {
     metricsPanelEl.classList.toggle("is-hidden", !showApp);
   }
+  if (pomodoroPanelEl) {
+    pomodoroPanelEl.classList.toggle("is-hidden", !showApp);
+  }
   if (boardPanelEl) {
     boardPanelEl.classList.toggle("is-hidden", !showApp);
   }
@@ -444,9 +477,16 @@ function setAccessEnabled(enabled, user = null) {
       listActionsEl.classList.add("is-hidden");
     }
     renderDueSnapshot({ overdue: 0, today: 0, upcoming: 0, noDue: 0 });
+    state.pomodoroSelectedTodoId = null;
+    state.pomodoroDurationMinutes = 25;
+    state.pomodoroSession = null;
+    state.pomodoroSummary = null;
+    state.pomodoroByTodo = [];
+    stopPomodoroTicker();
   }
 
   setBusy(state.busy);
+  renderPomodoroPanel();
 }
 
 function normalizeSqliteTime(value) {
@@ -608,6 +648,284 @@ function isValidDateInput(value) {
     date.getUTCMonth() === month - 1 &&
     date.getUTCDate() === day
   );
+}
+
+function formatSecondsAsClock(totalSeconds) {
+  const safeSeconds = Math.max(0, Number.parseInt(String(totalSeconds || 0), 10) || 0);
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatSecondsAsMinutes(totalSeconds) {
+  const safeSeconds = Math.max(0, Number.parseInt(String(totalSeconds || 0), 10) || 0);
+  const minutes = Math.max(1, Math.round(safeSeconds / 60));
+  return `${minutes} 分钟`;
+}
+
+function getPomodoroElapsedSeconds(session) {
+  if (!session?.startedAt) {
+    return 0;
+  }
+  const startedAtMs = Date.parse(String(session.startedAt));
+  if (!Number.isFinite(startedAtMs)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+}
+
+function getPomodoroRemainingSeconds(session) {
+  if (!session) {
+    return 0;
+  }
+  const plannedSeconds = Math.max(1, Number(session.plannedMinutes || 25) * 60);
+  return Math.max(0, plannedSeconds - getPomodoroElapsedSeconds(session));
+}
+
+function stopPomodoroTicker() {
+  if (pomodoroTickerId) {
+    clearInterval(pomodoroTickerId);
+    pomodoroTickerId = null;
+  }
+}
+
+function ensurePomodoroTicker() {
+  const isRunning = state.pomodoroSession?.status === "running";
+  if (!isRunning) {
+    stopPomodoroTicker();
+    return;
+  }
+
+  if (pomodoroTickerId) {
+    return;
+  }
+
+  pomodoroTickerId = setInterval(() => {
+    renderPomodoroPanel();
+  }, 1000);
+}
+
+function getSelectedPomodoroTodo() {
+  const selectedId = Number(state.pomodoroSelectedTodoId);
+  if (!Number.isInteger(selectedId) || selectedId <= 0) {
+    return null;
+  }
+  return getTodoById(selectedId);
+}
+
+function getPomodoroTodoStat(todoId) {
+  const targetId = Number(todoId);
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return null;
+  }
+  return state.pomodoroByTodo.find((item) => Number(item.todoId) === targetId) || null;
+}
+
+function renderPomodoroPanel() {
+  if (!pomodoroPanelEl) {
+    return;
+  }
+
+  const running = state.pomodoroSession?.status === "running" ? state.pomodoroSession : null;
+  if (running) {
+    state.pomodoroSelectedTodoId = running.todoId;
+  }
+
+  const selectedTodo = getSelectedPomodoroTodo();
+  const selectedTodoId = Number(state.pomodoroSelectedTodoId);
+  const todoStat = getPomodoroTodoStat(selectedTodo?.id || selectedTodoId);
+  const selectedLabel =
+    selectedTodo?.title ||
+    todoStat?.title ||
+    (Number.isInteger(selectedTodoId) && selectedTodoId > 0 ? `任务 #${selectedTodoId}` : "未选择任务");
+
+  if (pomodoroTaskTitleEl) {
+    pomodoroTaskTitleEl.textContent = selectedLabel;
+  }
+
+  if (pomodoroTaskStatsEl) {
+    if (todoStat) {
+      pomodoroTaskStatsEl.textContent = `累计专注 ${formatSecondsAsMinutes(todoStat.totalSeconds)} · ${todoStat.completedSessions}/${todoStat.totalSessions} 次完成`;
+    } else {
+      pomodoroTaskStatsEl.textContent = "累计专注 0 分钟 · 0 次番茄";
+    }
+  }
+
+  if (pomodoroDurationSelectEl && !running) {
+    pomodoroDurationSelectEl.value = String(state.pomodoroDurationMinutes || 25);
+  }
+
+  if (pomodoroTimerEl) {
+    if (running) {
+      pomodoroTimerEl.textContent = formatSecondsAsClock(getPomodoroRemainingSeconds(running));
+    } else {
+      pomodoroTimerEl.textContent = formatSecondsAsClock((state.pomodoroDurationMinutes || 25) * 60);
+    }
+  }
+
+  if (pomodoroSessionMetaEl) {
+    if (running) {
+      const remaining = getPomodoroRemainingSeconds(running);
+      if (remaining > 0) {
+        pomodoroSessionMetaEl.textContent = `进行中 · 剩余 ${formatSecondsAsClock(remaining)}`;
+      } else {
+        pomodoroSessionMetaEl.textContent = "本轮已到时，可点击“完成番茄”或“中断”";
+      }
+    } else {
+      const totalSessions = Number(state.pomodoroSummary?.totalSessions || 0);
+      const totalSeconds = Number(state.pomodoroSummary?.totalSeconds || 0);
+      pomodoroSessionMetaEl.textContent =
+        totalSessions > 0
+          ? `历史累计 ${totalSessions} 次 · ${formatSecondsAsMinutes(totalSeconds)}`
+          : "尚未开始番茄专注";
+    }
+  }
+
+  const hasSelectedTodo = Boolean(selectedTodo);
+  const lockByBusy = Boolean(state.busy || !state.accessEnabled);
+  if (pomodoroDurationSelectEl) {
+    pomodoroDurationSelectEl.disabled = lockByBusy || Boolean(running);
+  }
+  if (pomodoroStartButtonEl) {
+    pomodoroStartButtonEl.disabled = lockByBusy || !hasSelectedTodo || Boolean(running);
+  }
+  if (pomodoroCompleteButtonEl) {
+    pomodoroCompleteButtonEl.disabled = lockByBusy || !running;
+  }
+  if (pomodoroCancelButtonEl) {
+    pomodoroCancelButtonEl.disabled = lockByBusy || !running;
+  }
+
+  ensurePomodoroTicker();
+}
+
+async function loadPomodoroStats({ silent = true } = {}) {
+  if (!state.accessEnabled) {
+    state.pomodoroSession = null;
+    state.pomodoroSummary = null;
+    state.pomodoroByTodo = [];
+    renderPomodoroPanel();
+    return;
+  }
+
+  try {
+    const payload = await requestJSON("/api/pomodoro/stats?limit=50");
+    state.pomodoroSummary = payload?.summary || null;
+    state.pomodoroByTodo = Array.isArray(payload?.byTodo) ? payload.byTodo : [];
+    state.pomodoroSession = payload?.running || null;
+    if (state.pomodoroSession?.status === "running") {
+      state.pomodoroSelectedTodoId = state.pomodoroSession.todoId;
+    }
+    renderPomodoroPanel();
+  } catch (error) {
+    if (!silent) {
+      setMessage(error.message || "番茄统计加载失败", true);
+    }
+  }
+}
+
+async function onStartPomodoro(todoId = state.pomodoroSelectedTodoId) {
+  const targetTodoId = Number.parseInt(String(todoId || ""), 10);
+  if (!Number.isInteger(targetTodoId) || targetTodoId <= 0) {
+    setMessage("请先选择一个未完成任务再开始番茄", true);
+    return;
+  }
+
+  const todo = getTodoById(targetTodoId);
+  if (!todo) {
+    setMessage("选中的任务不存在或不在当前列表中", true);
+    return;
+  }
+  if (todo.completed) {
+    setMessage("已完成任务不能开启番茄", true);
+    return;
+  }
+
+  if (state.pomodoroSession?.status === "running") {
+    if (Number(state.pomodoroSession.todoId) === targetTodoId) {
+      setMessage("当前任务番茄已在进行中");
+    } else {
+      setMessage("已有其他番茄在进行，请先完成或中断", true);
+    }
+    return;
+  }
+
+  const plannedMinutes = Number.parseInt(String(pomodoroDurationSelectEl?.value || state.pomodoroDurationMinutes || 25), 10);
+  state.pomodoroDurationMinutes = Number.isInteger(plannedMinutes) ? plannedMinutes : 25;
+
+  setBusy(true);
+  setMessage("正在启动番茄...");
+  try {
+    const payload = await requestJSON("/api/pomodoro/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        todoId: targetTodoId,
+        plannedMinutes: state.pomodoroDurationMinutes,
+      }),
+    });
+
+    state.pomodoroSession = payload?.session || null;
+    state.pomodoroSelectedTodoId = targetTodoId;
+    await loadTodos({ silent: true });
+    await loadPomodoroStats({ silent: true });
+    setMessage(`番茄已开始：${payload?.todo?.title || todo.title}`);
+  } catch (error) {
+    setMessage(error.message || "启动番茄失败", true);
+  } finally {
+    setBusy(false);
+    renderPomodoroPanel();
+  }
+}
+
+async function onFinishPomodoro(action) {
+  const running = state.pomodoroSession?.status === "running" ? state.pomodoroSession : null;
+  if (!running) {
+    setMessage("当前没有进行中的番茄");
+    return;
+  }
+
+  const isCancel = action === "cancel";
+  const endpoint = isCancel ? "cancel" : "complete";
+  const elapsedSeconds = getPomodoroElapsedSeconds(running);
+
+  setBusy(true);
+  setMessage(isCancel ? "正在中断番茄..." : "正在完成番茄...");
+  try {
+    await requestJSON(`/api/pomodoro/sessions/${running.id}/${endpoint}`, {
+      method: "POST",
+      body: JSON.stringify({
+        durationSeconds: elapsedSeconds,
+      }),
+    });
+
+    state.pomodoroSession = null;
+    await loadPomodoroStats({ silent: true });
+    setMessage(
+      isCancel
+        ? `已中断本轮番茄，已记录 ${formatSecondsAsMinutes(elapsedSeconds)}`
+        : `已完成本轮番茄，专注 ${formatSecondsAsMinutes(elapsedSeconds)}`,
+    );
+  } catch (error) {
+    setMessage(error.message || "番茄状态更新失败", true);
+  } finally {
+    setBusy(false);
+    renderPomodoroPanel();
+  }
+}
+
+function onQuickStartPomodoro(todoId) {
+  const targetId = Number.parseInt(String(todoId || ""), 10);
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return;
+  }
+  state.pomodoroSelectedTodoId = targetId;
+  renderPomodoroPanel();
+  onStartPomodoro(targetId);
 }
 
 function getBatchTitles() {
@@ -930,6 +1248,31 @@ function renderTodoNode(item, depth) {
 
   const actionsEl = document.createElement("div");
   actionsEl.className = "todo-actions";
+
+  const pomodoroButton = document.createElement("button");
+  pomodoroButton.type = "button";
+  pomodoroButton.className = "todo-action is-focus";
+
+  const runningSession = state.pomodoroSession?.status === "running" ? state.pomodoroSession : null;
+  const isRunningCurrent = runningSession && Number(runningSession.todoId) === Number(item.id);
+  const hasRunningOther = runningSession && Number(runningSession.todoId) !== Number(item.id);
+
+  if (isRunningCurrent) {
+    pomodoroButton.textContent = "番茄进行中";
+    pomodoroButton.disabled = true;
+  } else if (item.completed) {
+    pomodoroButton.textContent = "已完成";
+    pomodoroButton.disabled = true;
+  } else if (hasRunningOther) {
+    pomodoroButton.textContent = "番茄开始";
+    pomodoroButton.disabled = true;
+  } else {
+    pomodoroButton.textContent = "番茄开始";
+    pomodoroButton.disabled = false;
+  }
+
+  pomodoroButton.addEventListener("click", () => onQuickStartPomodoro(item.id));
+  actionsEl.appendChild(pomodoroButton);
 
   const editButton = document.createElement("button");
   editButton.type = "button";
@@ -1435,6 +1778,7 @@ async function loadTodos({ silent = false, append = false } = {}) {
     renderComposeModeButtons();
     renderComposerActionButtons();
     updateComposerSummary();
+    renderPomodoroPanel();
     setSyncStatus("已连接");
 
     if (undoButtonEl) {
@@ -1479,6 +1823,7 @@ async function bootstrapAuth() {
     setSyncStatus("已连接");
     if (PAGE_MODE === "app") {
       await loadTodos({ silent: true });
+      await loadPomodoroStats({ silent: true });
       return;
     }
 
@@ -1534,6 +1879,7 @@ async function applyAuthTokensFromURL() {
           setSyncStatus("已连接");
           if (PAGE_MODE === "app") {
             await loadTodos({ silent: true });
+            await loadPomodoroStats({ silent: true });
           }
         }
       } else {
@@ -1999,6 +2345,7 @@ async function onAuthSubmit(event) {
 
     setMessage("登录成功");
     await loadTodos({ silent: true });
+    await loadPomodoroStats({ silent: true });
   } catch (error) {
     setAuthMessage(error.message || (isRegister ? "注册失败" : "登录失败"));
   } finally {
@@ -2073,6 +2420,7 @@ async function onVerifyEmail() {
     setSyncStatus("已连接");
     if (PAGE_MODE === "app") {
       await loadTodos({ silent: true });
+      await loadPomodoroStats({ silent: true });
     }
   } catch (error) {
     setAccountMessage(error.message || "验证失败", true);
@@ -2749,9 +3097,45 @@ if (modalImportFileInputEl) {
   modalImportFileInputEl.addEventListener("change", handleImportFileChange);
 }
 
+if (pomodoroDurationSelectEl) {
+  pomodoroDurationSelectEl.addEventListener("change", () => {
+    const nextMinutes = Number.parseInt(String(pomodoroDurationSelectEl.value || 25), 10);
+    state.pomodoroDurationMinutes = Number.isInteger(nextMinutes) ? nextMinutes : 25;
+    renderPomodoroPanel();
+  });
+}
+
+if (pomodoroStartButtonEl) {
+  pomodoroStartButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onStartPomodoro();
+  });
+}
+
+if (pomodoroCompleteButtonEl) {
+  pomodoroCompleteButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onFinishPomodoro("complete");
+  });
+}
+
+if (pomodoroCancelButtonEl) {
+  pomodoroCancelButtonEl.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    onFinishPomodoro("cancel");
+  });
+}
+
 todoFormEl.addEventListener("submit", onAddTodo);
 
 setComposeMode("single");
 setAuthMode("login");
 setAccessEnabled(false, null);
+renderPomodoroPanel();
 bootstrapApp();

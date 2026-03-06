@@ -703,6 +703,126 @@ button {
   font-family: "Space Grotesk", sans-serif;
 }
 
+.pomodoro-panel {
+  padding: 14px;
+}
+
+.pomodoro-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pomodoro-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #0f6f66;
+}
+
+.pomodoro-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.16rem;
+  line-height: 1.2;
+}
+
+.pomodoro-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.pomodoro-settings {
+  display: grid;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.pomodoro-settings label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.pomodoro-body {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: minmax(130px, 180px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.pomodoro-clock-wrap {
+  border: 1px solid rgba(33, 54, 94, 0.12);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.pomodoro-timer {
+  margin: 0;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  line-height: 1;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.pomodoro-session-meta {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.pomodoro-task-wrap {
+  border: 1px solid rgba(33, 54, 94, 0.12);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.pomodoro-task-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pomodoro-task-title {
+  margin: 4px 0 0;
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.pomodoro-task-stats {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.pomodoro-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+#pomodoroStartButton {
+  background: linear-gradient(130deg, var(--accent), #0a6476);
+  color: #fff;
+  padding: 10px 14px;
+}
+
+.todo-action.is-focus {
+  border-color: rgba(10, 127, 116, 0.3);
+  color: #0f6f66;
+}
+
+.todo-action.is-focus:hover {
+  background: rgba(222, 245, 242, 0.95);
+}
+
 .board-panel {
   padding: 14px;
 }
@@ -1221,6 +1341,15 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .pomodoro-body {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .pomodoro-actions {
+    justify-content: flex-start;
+  }
+
   .composer-extra {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1264,6 +1393,20 @@ button {
   .auth-head {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .pomodoro-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .pomodoro-settings {
+    width: 100%;
+  }
+
+  .pomodoro-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .docs-head {
