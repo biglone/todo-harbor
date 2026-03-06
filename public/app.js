@@ -23,6 +23,7 @@ const state = {
   parents: [],
   undoAvailable: false,
   user: null,
+  workspaceMode: "today",
   pomodoroSelectedTodoId: null,
   pomodoroDurationMinutes: 25,
   pomodoroSession: null,
@@ -100,6 +101,10 @@ const composerPanelEl = document.getElementById("composerPanel");
 const metricsPanelEl = document.getElementById("metricsPanel");
 const pomodoroPanelEl = document.getElementById("pomodoroPanel");
 const boardPanelEl = document.getElementById("boardPanel");
+const workspacePanelEl = document.getElementById("workspacePanel");
+const workspaceHintEl = document.getElementById("workspaceHint");
+const workspaceTodayFilterButtonEl = document.getElementById("workspaceTodayFilterButton");
+const workspaceResetFilterButtonEl = document.getElementById("workspaceResetFilterButton");
 const pomodoroDurationSelectEl = document.getElementById("pomodoroDurationSelect");
 const pomodoroTimerEl = document.getElementById("pomodoroTimer");
 const pomodoroSessionMetaEl = document.getElementById("pomodoroSessionMeta");
@@ -176,12 +181,16 @@ const dueScopeButtons = document.querySelectorAll(".due-scope");
 const viewModeButtons = document.querySelectorAll(".view-mode");
 const composeModeButtons = document.querySelectorAll(".compose-mode");
 const quickDateButtons = document.querySelectorAll(".quick-date");
+const workspaceModeButtons = document.querySelectorAll(".workspace-mode");
 
 const MODAL_TYPES = {
   bulkProject: "bulkProject",
   bulkDueDate: "bulkDueDate",
   importJson: "importJson",
 };
+
+const WORKSPACE_MODE_STORAGE_KEY = "todo_harbor_workspace_mode";
+const VALID_WORKSPACE_MODES = new Set(["today", "focus", "capture", "all"]);
 
 let activeModalType = null;
 let pomodoroTickerId = null;
@@ -301,6 +310,15 @@ function setBusy(nextBusy) {
   }
   if (pomodoroCancelButtonEl) {
     pomodoroCancelButtonEl.disabled = locked;
+  }
+  if (workspaceTodayFilterButtonEl) {
+    workspaceTodayFilterButtonEl.disabled = locked;
+  }
+  if (workspaceResetFilterButtonEl) {
+    workspaceResetFilterButtonEl.disabled = locked;
+  }
+  for (const button of workspaceModeButtons) {
+    button.disabled = locked;
   }
 
   renderPomodoroPanel();
@@ -429,6 +447,91 @@ function updateRouteNav(enabled) {
   }
 }
 
+function loadWorkspaceModePreference() {
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_MODE_STORAGE_KEY);
+    if (VALID_WORKSPACE_MODES.has(saved)) {
+      state.workspaceMode = saved;
+    }
+  } catch (_error) {
+    // ignore local storage errors
+  }
+}
+
+function saveWorkspaceModePreference(mode) {
+  try {
+    window.localStorage.setItem(WORKSPACE_MODE_STORAGE_KEY, mode);
+  } catch (_error) {
+    // ignore local storage errors
+  }
+}
+
+function getWorkspaceModeHint(mode) {
+  if (mode === "focus") {
+    return "专注执行模式：保留番茄时钟和任务看板，边做边计时。";
+  }
+  if (mode === "capture") {
+    return "快速录入模式：仅显示新增区，适合连续脑暴录入任务。";
+  }
+  if (mode === "all") {
+    return "全部面板模式：展示所有模块，适合全局排查与维护。";
+  }
+  return "今日执行模式：仅保留统计与任务看板，减少滚动距离。";
+}
+
+function renderWorkspaceMenu() {
+  for (const button of workspaceModeButtons) {
+    const selected = button.dataset.workspaceMode === state.workspaceMode;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+  if (workspaceHintEl) {
+    workspaceHintEl.textContent = getWorkspaceModeHint(state.workspaceMode);
+  }
+}
+
+function renderWorkspaceLayout() {
+  const showApp = PAGE_MODE === "app" && state.accessEnabled;
+  if (workspacePanelEl) {
+    workspacePanelEl.classList.toggle("is-hidden", !showApp);
+  }
+  if (!showApp) {
+    return;
+  }
+
+  const mode = VALID_WORKSPACE_MODES.has(state.workspaceMode) ? state.workspaceMode : "today";
+  state.workspaceMode = mode;
+
+  const showComposer = mode === "capture" || mode === "all";
+  const showMetrics = mode === "today" || mode === "all";
+  const showPomodoro = mode === "focus" || mode === "all";
+  const showBoard = mode !== "capture";
+
+  if (composerPanelEl) {
+    composerPanelEl.classList.toggle("is-hidden", !showComposer);
+  }
+  if (metricsPanelEl) {
+    metricsPanelEl.classList.toggle("is-hidden", !showMetrics);
+  }
+  if (pomodoroPanelEl) {
+    pomodoroPanelEl.classList.toggle("is-hidden", !showPomodoro);
+  }
+  if (boardPanelEl) {
+    boardPanelEl.classList.toggle("is-hidden", !showBoard);
+  }
+
+  renderWorkspaceMenu();
+}
+
+function setWorkspaceMode(mode, { persist = true } = {}) {
+  const nextMode = VALID_WORKSPACE_MODES.has(mode) ? mode : "today";
+  state.workspaceMode = nextMode;
+  if (persist) {
+    saveWorkspaceModePreference(nextMode);
+  }
+  renderWorkspaceLayout();
+}
+
 function updateRoutePanels(enabled) {
   const showAuth = PAGE_MODE === "auth" && !enabled;
   const showAccount = PAGE_MODE === "settings" && enabled;
@@ -452,6 +555,11 @@ function updateRoutePanels(enabled) {
   if (boardPanelEl) {
     boardPanelEl.classList.toggle("is-hidden", !showApp);
   }
+  if (workspacePanelEl) {
+    workspacePanelEl.classList.toggle("is-hidden", !showApp);
+  }
+
+  renderWorkspaceLayout();
 }
 
 function setAccessEnabled(enabled, user = null) {
@@ -483,9 +591,11 @@ function setAccessEnabled(enabled, user = null) {
     state.pomodoroSummary = null;
     state.pomodoroByTodo = [];
     stopPomodoroTicker();
+    setWorkspaceMode("today", { persist: false });
   }
 
   setBusy(state.busy);
+  renderWorkspaceLayout();
   renderPomodoroPanel();
 }
 
@@ -1094,6 +1204,19 @@ function countTreeNodes(node) {
   return count;
 }
 
+function getProjectPomodoroTarget(projectName) {
+  const normalizedProject = String(projectName || "默认项目");
+  const source = Array.isArray(state.visibleItems) && state.visibleItems.length ? state.visibleItems : state.items;
+  const candidates = source.filter(
+    (item) => !item.completed && String(item.project || "默认项目") === normalizedProject,
+  );
+  if (!candidates.length) {
+    return null;
+  }
+  candidates.sort((a, b) => b.id - a.id);
+  return candidates[0];
+}
+
 function getTodoById(id) {
   return state.items.find((item) => item.id === id) || null;
 }
@@ -1377,10 +1500,43 @@ function renderGroupedByProject(roots) {
     title.textContent = key;
     head.appendChild(title);
 
+    const meta = document.createElement("div");
+    meta.className = "group-head-meta";
+
     const size = document.createElement("span");
     const total = groups.get(key).reduce((sum, item) => sum + countTreeNodes(item), 0);
     size.textContent = `${total} 项`;
-    head.appendChild(size);
+    meta.appendChild(size);
+
+    const projectPomodoroButton = document.createElement("button");
+    projectPomodoroButton.type = "button";
+    projectPomodoroButton.className = "secondary-button compact-button group-pomodoro-button";
+
+    const targetTodo = getProjectPomodoroTarget(key);
+    const runningSession = state.pomodoroSession?.status === "running" ? state.pomodoroSession : null;
+    const runningTodo = runningSession ? getTodoById(Number(runningSession.todoId)) : null;
+    const runningTodoStat = runningSession ? getPomodoroTodoStat(runningSession.todoId) : null;
+    const runningProject = runningTodo?.project || runningTodoStat?.project || null;
+    const runningOnCurrentProject = runningSession && runningProject === key;
+    const hasRunningOtherProject = runningSession && !runningOnCurrentProject;
+
+    if (runningOnCurrentProject) {
+      projectPomodoroButton.textContent = "番茄进行中";
+      projectPomodoroButton.disabled = true;
+    } else if (hasRunningOtherProject) {
+      projectPomodoroButton.textContent = "项目番茄";
+      projectPomodoroButton.disabled = true;
+    } else if (!targetTodo) {
+      projectPomodoroButton.textContent = "无可执行任务";
+      projectPomodoroButton.disabled = true;
+    } else {
+      projectPomodoroButton.textContent = "项目番茄";
+      projectPomodoroButton.disabled = false;
+      projectPomodoroButton.addEventListener("click", () => onQuickStartPomodoro(targetTodo.id));
+    }
+
+    meta.appendChild(projectPomodoroButton);
+    head.appendChild(meta);
 
     section.appendChild(head);
 
@@ -2564,6 +2720,33 @@ function resetQueryFilters() {
   syncQueryStateFromControls();
 }
 
+async function applyTodayExecutionFilters() {
+  if (state.busy || !state.accessEnabled) {
+    return;
+  }
+
+  state.filter = "active";
+  state.dueScope = "today";
+  renderFilterButtons();
+  renderDueScopeButtons();
+  await loadTodos();
+  setMessage("已切换到今天任务：进行中 + 今日到期");
+}
+
+async function applyAllTaskFilters() {
+  if (state.busy || !state.accessEnabled) {
+    return;
+  }
+
+  state.filter = "all";
+  state.dueScope = "all";
+  resetQueryFilters();
+  renderFilterButtons();
+  renderDueScopeButtons();
+  await loadTodos();
+  setMessage("已恢复全部任务视图");
+}
+
 function setModalVisibility(isOpen) {
   if (!modalEl) {
     return;
@@ -2738,6 +2921,28 @@ for (const button of authModeButtons) {
       return;
     }
     setAuthMode(button.dataset.authMode);
+  });
+}
+
+for (const button of workspaceModeButtons) {
+  button.addEventListener("click", () => {
+    if (state.busy || !state.accessEnabled) {
+      return;
+    }
+    setWorkspaceMode(button.dataset.workspaceMode || "today");
+  });
+}
+
+if (workspaceTodayFilterButtonEl) {
+  workspaceTodayFilterButtonEl.addEventListener("click", async () => {
+    setWorkspaceMode("today");
+    await applyTodayExecutionFilters();
+  });
+}
+
+if (workspaceResetFilterButtonEl) {
+  workspaceResetFilterButtonEl.addEventListener("click", async () => {
+    await applyAllTaskFilters();
   });
 }
 
@@ -3136,6 +3341,7 @@ todoFormEl.addEventListener("submit", onAddTodo);
 
 setComposeMode("single");
 setAuthMode("login");
+loadWorkspaceModePreference();
 setAccessEnabled(false, null);
 renderPomodoroPanel();
 bootstrapApp();

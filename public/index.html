@@ -56,6 +56,32 @@
         </div>
       </section>
 
+      <section class="panel workspace-panel is-hidden" id="workspacePanel" aria-label="工作区菜单">
+        <div class="workspace-head">
+          <div>
+            <p class="workspace-kicker">工作区</p>
+            <h2>按场景切换布局</h2>
+            <p class="workspace-note" id="workspaceHint">今日执行模式：仅保留关键信息，减少滚动距离。</p>
+          </div>
+          <div class="workspace-actions">
+            <button id="workspaceTodayFilterButton" class="secondary-button compact-button" type="button">
+              仅看今天任务
+            </button>
+            <button id="workspaceResetFilterButton" class="secondary-button compact-button" type="button">
+              恢复全部任务
+            </button>
+          </div>
+        </div>
+        <div class="workspace-modes" role="tablist" aria-label="工作区模式">
+          <button class="workspace-mode is-active" data-workspace-mode="today" role="tab" aria-selected="true">
+            今日执行
+          </button>
+          <button class="workspace-mode" data-workspace-mode="focus" role="tab" aria-selected="false">专注执行</button>
+          <button class="workspace-mode" data-workspace-mode="capture" role="tab" aria-selected="false">快速录入</button>
+          <button class="workspace-mode" data-workspace-mode="all" role="tab" aria-selected="false">全部面板</button>
+        </div>
+      </section>
+
       <section class="panel auth-panel" id="authPanel" aria-label="登录注册">
         <div class="auth-head">
           <div>

@@ -61,7 +61,7 @@ body {
 .shell {
   position: relative;
   z-index: 1;
-  width: min(860px, 92vw);
+  width: min(1160px, 94vw);
   margin: 40px auto 60px;
 }
 
@@ -238,6 +238,81 @@ h1 {
 
 .docs-link:hover {
   background: rgba(235, 241, 255, 0.95);
+}
+
+.workspace-panel {
+  padding: 14px;
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.92), rgba(242, 248, 255, 0.9)),
+    var(--panel);
+}
+
+.workspace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.workspace-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #0f6f66;
+}
+
+.workspace-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.12rem;
+  line-height: 1.2;
+}
+
+.workspace-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.workspace-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workspace-modes {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workspace-mode {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(33, 54, 94, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  color: #2a3c6b;
+  font-size: 0.84rem;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.workspace-mode:hover {
+  background: rgba(236, 245, 255, 0.95);
+}
+
+.workspace-mode.is-active {
+  border-color: rgba(15, 102, 120, 0.56);
+  background: linear-gradient(140deg, #0f7f74, #0f5c9f);
+  color: #fff;
 }
 
 .auth-panel {
@@ -1096,9 +1171,22 @@ button {
   font-size: 0.95rem;
 }
 
+.group-head-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .group-head span {
   font-size: 0.84rem;
   color: var(--muted);
+}
+
+.group-pomodoro-button {
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 .group-body {
@@ -1337,6 +1425,10 @@ button {
 }
 
 @media (max-width: 860px) {
+  .workspace-modes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .composer-grid {
     grid-template-columns: 1fr;
   }
@@ -1414,9 +1506,33 @@ button {
     gap: 10px;
   }
 
+  .workspace-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .workspace-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .workspace-modes {
+    grid-template-columns: 1fr;
+  }
+
   .docs-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .group-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .group-head-meta {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .auth-actions {
